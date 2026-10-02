@@ -4,7 +4,7 @@
 
 ## 安装和连接
 
-1. 在手机打开 [GitHub Release](https://github.com/EliotOK/codex-lan/releases/latest)，下载 `codex-lan-android.apk` 安装。需要 Android 8.0 或更新版本；按系统提示允许此次安装。0.3.0 可直接覆盖安装已有版本。
+1. 在手机打开 [GitHub Release](https://github.com/EliotOK/codex-lan/releases/latest)，下载 `codex-lan-android.apk` 安装。需要 Android 8.0 或更新版本；按系统提示允许此次安装。0.4.0 可直接覆盖安装已有版本，此后可在 App 内更新。
 2. 电脑运行配套 `codex-lan/install-keepalive.ps1`，在电脑浏览器打开 `http://127.0.0.1:8788/`，查看当前地址和 8 位配对码。本次交付已在当前电脑启用守护任务。
 3. 手机和电脑连接同一局域网。应用内填写电脑面板显示的 HTTPS 地址和配对码，点击“连接电脑”。本次交付默认地址为 `https://192.168.1.220:8787`。
 4. 点击“会话”选择已有聊天。手机发送的文字会提交到该桌面会话；正在执行时也可提交后续消息。
@@ -20,6 +20,10 @@ openssl x509 -in ..\codex-lan-certificate.pem -noout -fingerprint -sha256
 如连接失败，确认电脑服务仍运行、地址未变化、Wi-Fi 没有客户端隔离，并检查 Windows 防火墙是否允许服务使用的 Node 程序在专用网络接收 TCP 8787。连接地址必须与证书的 IP SAN 匹配。
 
 ## 功能与通信
+
+应用更新：已连接时右上角“•••”→“检查更新”，未配对时配对页右上角“检查更新”。显示当前版本、新版说明与下载大小；点击“下载更新”，完成校验后点击“安装更新”。首次需在安卓设置允许 Codex LAN 安装应用，返回后打开系统安装确认。关闭弹窗可继续使用 App，下载任务在当前应用进程内继续；若进程被系统结束，重新打开后检查并重新下载。
+
+更新读取公开 GitHub 最新正式 Release，无需 GitHub 登录或电脑连接，需要手机能访问 GitHub。只接收该仓库的正式版本与指定 APK，经 HTTPS 下载、SHA-256 和文件大小校验，再检查包名、递增版本号及与当前应用相同的签名。缓存与安装共享仅限应用自身的 `cache/updates/`；不需要公共存储权限。更新连接不携带电脑会话 Cookie、配对码或 CSRF。用户确认系统安装后覆盖现有应用，保存的连接与草稿继续使用。检查和下载支持重试、取消。自行构建签名与官方发布签名不一致时，需要使用自己的更新渠道。
 
 - 原生配对、搜索会话、显示 Markdown 消息、展开执行记录和会话上下文、读取更早历史和提交文字。
 - 图片附件及回复中的本地 Markdown 图片显示预览，点击打开大图，支持双指缩放、拖动、双击和重置。支持 PNG、JPEG、GIF、WebP 和 BMP；GIF 显示静态首帧，单图上限 20 MB。大图按手机内存预算采样，最长边 4096 像素、最多约 400 万像素。已删除或格式不支持的图片显示提示和重试入口。
@@ -61,6 +65,6 @@ openssl x509 -in ..\codex-lan-certificate.pem -noout -fingerprint -sha256
 
 可选桌面只读集成测试：设置 `LAN_TEST_ENDPOINT`、`LAN_TEST_CERT`、`LAN_TEST_CODE`、`LAN_TEST_THREAD` 后运行 JVM 测试。未设置时跳过此项。该测试只配对、列举、读取和注销，不发送桌面消息。
 
-设备测试使用 `app/src/androidTest`。对于模拟器可运行 `adb reverse tcp:8787 tcp:8787`，并给测试 runner 传入 `pairingCode`、`endpoint=https://127.0.0.1:8787` 和 `threadTitle`。电脑证书必须包含 `127.0.0.1` SAN。测试中的不确定发送由模拟 HTTPS 服务处理。
+设备测试使用 `app/src/androidTest`。对于模拟器可运行 `adb reverse tcp:8787 tcp:8787`，并给测试 runner 传入 `pairingCode`、`endpoint=https://127.0.0.1:8787` 和 `threadTitle`。电脑证书必须包含 `127.0.0.1` SAN。测试中的不确定发送由模拟 HTTPS 服务处理。安装器集成测试另需传入 `updateApkPath`，指向已放入测试应用可读目录、相同签名、versionCode 更高且 versionName 为 `0.4.1` 的本地测试 APK，并在测试设备允许本应用请求安装；验证到系统确认界面后取消。
 
 依赖及说明：[Android 构建兼容性](https://developer.android.com/build/releases/agp-8-13-0-release-notes)、[Jetpack Compose](https://developer.android.com/develop/ui/compose)、[Android Keystore](https://developer.android.com/privacy-and-security/keystore)、[系统语音识别接口](https://developer.android.com/reference/android/speech/RecognizerIntent)。

@@ -76,13 +76,19 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun App(state: ChatState, vm: ChatViewModel) {
+    val updater:UpdateViewModel=viewModel()
+    var showUpdate by rememberSaveable{mutableStateOf(false)}
+    fun openUpdate(){showUpdate=true;if(!updater.state.value.checked)updater.check()}
     var showThreads by rememberSaveable { mutableStateOf(false) }
     var showFingerprint by remember { mutableStateOf(false) }
     var acknowledge by remember { mutableStateOf(false) }
     var disconnect by remember { mutableStateOf(false) }
     BackHandler(state.paired && showThreads) { showThreads = false }
     Column(Modifier.fillMaxSize().background(Background).safeDrawingPadding().imePadding()) {
-        if (!state.paired) PairScreen(state, vm)
+        if (!state.paired) Box(Modifier.fillMaxSize()){
+            PairScreen(state, vm)
+            TextButton(onClick=::openUpdate,modifier=Modifier.align(Alignment.TopEnd).padding(8.dp)){Text("检查更新")}
+        }
         else {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { showThreads = !showThreads }) { Text(if (showThreads) "返回" else "会话") }
@@ -98,6 +104,7 @@ class MainActivity : ComponentActivity() {
                         DropdownMenuItem(text = { Text("立即刷新") }, onClick = { menu = false; vm.refreshNow() })
                         DropdownMenuItem(text = { Text("重新连接") }, onClick = { menu = false; vm.reconnect() })
                         DropdownMenuItem(text = { Text("连接和证书") }, onClick = { menu = false; showFingerprint = true })
+                        DropdownMenuItem(text = { Text("检查更新") }, onClick = { menu=false;openUpdate() })
                         DropdownMenuItem(text = { Text("断开配对") }, enabled = !state.sending, onClick = { menu = false; disconnect = true })
                     }
                 }
@@ -108,6 +115,7 @@ class MainActivity : ComponentActivity() {
             else Conversation(state, vm, Modifier.weight(1f), acknowledge = { acknowledge = true })
         }
     }
+    if(showUpdate)UpdatePanel(updater){showUpdate=false}
     if (showFingerprint) AlertDialog(onDismissRequest = { showFingerprint = false }, confirmButton = {
         TextButton(onClick = { showFingerprint = false }) { Text("关闭") }
     }, title = { Text("当前电脑") }, text = { SelectionContainer { Text("${state.endpoint}\n\n配对码在电脑连接面板的“连接设置”中修改，已配对设备保持连接。\n\n证书 SHA-256\n${state.fingerprint}", fontSize = 12.sp) } })

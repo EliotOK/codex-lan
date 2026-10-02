@@ -1,12 +1,14 @@
 # Codex LAN
 
-原生 Android 客户端与 Windows 局域网连接服务，手机和 Codex Desktop 共享已有聊天。支持消息与进度同步、Markdown、语音转文字输入、图片预览与缩放、历史消息定位、一键回到底部、执行状态、剩余用量、草稿保存和断线恢复。
+原生 Android 客户端与 Windows 局域网连接服务，手机和 Codex Desktop 共享已有聊天。支持消息与进度同步、Markdown、语音转文字输入、图片预览与缩放、历史消息定位、一键回到底部、执行状态、剩余用量、应用内更新、草稿保存和断线恢复。
 
 主要开发原因是我的右手很不舒服不想打字QAQ，所以想躺在床上动动嘴皮就能（指挥大模型）干活。ChatGPT自带的远程控制要开VPN，很麻烦且不稳定，我希望有一个只要维持在局域网内就能秒连的客户端。
 
 ## 手机安装
 
 在手机浏览器打开本仓库的 [Releases](https://github.com/EliotOK/codex-lan/releases/latest)，下载 `codex-lan-android.apk` 并安装。需要 Android 8.0 或更新版本。下载无需登录 GitHub。
+
+从 0.4.0 开始，右上角“•••”→“检查更新”可查看新版说明、下载并安装；未配对时配对页也有入口。需要手机能够访问 GitHub，首次在安卓设置允许 Codex LAN 安装应用，之后由系统确认覆盖安装。更新校验文件 SHA-256、包名、递增版本号与签名，保留现有连接和草稿。
 
 手机与电脑连接同一局域网，填写电脑连接面板显示的 HTTPS 地址和 8 位配对码。选择已有会话后即可继续聊天。语音识别结果放进消息框，确认后发送，Codex 返回文字；识别服务由手机系统提供。
 
@@ -27,8 +29,8 @@ cd codex-lan
 
 - [`codex-lan/`](codex-lan/README.md)：电脑服务、网页连接面板与 14 项服务器测试。
 - [`codex-lan-android/`](codex-lan-android/README.md)：Kotlin / Compose 客户端与 Android 构建说明。
-- [`安卓验证记录`](codex-lan-android/VALIDATION.md)：0.3.0 的 JVM、Android 15 设备测试及真实桌面读取验证。
+- [`安卓验证记录`](codex-lan-android/VALIDATION.md)：0.4.0 的 22 项 JVM、10 项 Android 15 设备测试、真实 GitHub 下载及系统安装确认验证。
 
 服务和守护任务读取已有记录，不主动发送消息或调用模型。前台约每 1.2 秒同步桌面快照；手机审批仍需在电脑完成。电脑关机、注销或休眠会中断连接。桌面桥接使用内部本地接口，Codex Desktop 更新可能影响兼容性。
 
-下载文件的 SHA-256 在 Release 的 `SHA256SUMS.txt` 中。0.3.0 发布包采用同一项目签名，可覆盖安装已有 0.1.0 和 0.2.0。
+下载文件的 SHA-256 在 Release 的 `SHA256SUMS.txt` 中。0.4.0 发布包采用同一项目签名，可覆盖安装已有版本。
