@@ -324,7 +324,7 @@ class MainActivity : ComponentActivity() {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(state = list, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
                 item(key = "history") { if (state.cursor != null) TextButton(onClick = vm::loadOlder, enabled = !state.loadingOlder) { Text(if (state.loadingOlder) "正在读取…" else "查看更早消息") } }
-                items(state.items, key = { it.key }) { message -> MessageCard(message,vm) }
+                items(state.items, key = { it.key }) { message -> MessageCard(message,vm) { follow=false } }
                 if (state.items.isEmpty()) item { Text(if (state.selected.isBlank()) "从会话列表选择聊天" else "正在同步桌面聊天…", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 32.dp)) }
             }
             if(state.items.isNotEmpty()&&!nearBottom)FilledTonalButton(onClick = { follow = true;anchorKey="";scope.launch { latest() } }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) { Text("↓ 最底部") }
@@ -337,7 +337,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         Surface(shape=RoundedCornerShape(28.dp),color=MaterialTheme.colorScheme.surfaceVariant,modifier=Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=8.dp)) {
-            Column(Modifier.padding(start=14.dp,end=10.dp,top=16.dp,bottom=8.dp)) {
+            Column(Modifier.padding(start=22.dp,end=18.dp,top=22.dp,bottom=12.dp)) {
                 if(state.attachments.isNotEmpty())Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     state.attachments.forEach { file -> InputChip(selected=false,onClick={vm.removeAttachment(file.id)},enabled=!state.sending&&!state.uploading,
                         label={Text(file.name,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.widthIn(max=170.dp))},trailingIcon={Text("×")},modifier=Modifier.testTag("pending-file:${file.id}")) }
@@ -411,33 +411,78 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun MessageCard(item: ChatItem,vm:ChatViewModel) {
+@Composable private fun MessageCard(item: ChatItem,vm:ChatViewModel,onInspect:()->Unit) {
     val density = LocalDensity.current
     val scale = LocalAppearance.current.fontSize / 14f
     CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * scale)) {
-        MessageRow(item, vm)
+        MessageRow(item, vm,onInspect)
     }
 }
-@Composable private fun MessageRow(item: ChatItem,vm:ChatViewModel) {
-    var expanded by rememberSaveable(item.key) { mutableStateOf(false) }
+@Composable private fun MessageRow(item: ChatItem,vm:ChatViewModel,onInspect:()->Unit) {
     val clipboard=androidx.compose.ui.platform.LocalClipboardManager.current
     if(item.role=="状态") { Text(item.text,color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=10.sp);return }
+    if(item.records.isNotEmpty()) { WorkRecordPanel(item,onInspect);return }
+    if(item.detail) {
+        var expanded by rememberSaveable(item.key) { mutableStateOf(false) }
+        Column(Modifier.fillMaxWidth().testTag("message-row:${item.key}")) {
+            Text((if(expanded)"▾ "else "▸ ")+item.role,modifier=Modifier.fillMaxWidth().clickable{onInspect();expanded=!expanded}.padding(vertical=10.dp),color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=13.sp,maxLines=1,overflow=TextOverflow.Ellipsis)
+            if(expanded)SelectionContainer { Text(item.text,Modifier.padding(horizontal=18.dp,vertical=12.dp),fontSize=12.sp,lineHeight=19.sp) }
+        };return
+    }
     val user=item.role=="你"
-    Column(Modifier.fillMaxWidth().testTag("message-row:${item.key}"),horizontalAlignment=if(user)Alignment.End else Alignment.Start) {
-        if(item.detail)Text((if(expanded)"▾ "else "▸ ")+item.role,modifier=Modifier.fillMaxWidth().clickable{expanded=!expanded}.padding(vertical=8.dp),color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=13.sp)
-        else if(item.role=="Codex · 进度")Text("正在处理",color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=11.sp,modifier=Modifier.padding(bottom=8.dp))
-        if(!item.detail||expanded)Surface(color=if(user)MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,shape=RoundedCornerShape(22.dp),modifier=if(user)Modifier.fillMaxWidth(0.92f)else Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(if(user)16.dp else 0.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                if(item.detail)SelectionContainer { Text(item.text,fontFamily=FontFamily.Monospace,fontSize=12.sp,lineHeight=19.sp) }
-                else {
+    Row(Modifier.fillMaxWidth().testTag("message-row:${item.key}"),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+        if(!user)Surface(color=MaterialTheme.colorScheme.primaryContainer,shape=CircleShape,modifier=Modifier.size(36.dp).testTag("reply-avatar:${item.key}")) {
+            Box(contentAlignment=Alignment.Center) { Text("C",fontWeight=FontWeight.Bold,fontSize=14.sp) }
+        }
+        Column(Modifier.weight(1f),horizontalAlignment=if(user)Alignment.End else Alignment.Start,verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            if(!user)Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                Text("Codex",color=Mint,fontWeight=FontWeight.SemiBold,fontSize=14.sp)
+                if(item.occurredAt>0) {
+                    val time=remember(item.occurredAt) {
+                        val millis=if(item.occurredAt<100000000000L)item.occurredAt*1000 else item.occurredAt
+                        java.text.SimpleDateFormat("HH:mm",java.util.Locale.getDefault()).format(java.util.Date(millis))
+                    }
+                    Text(time,color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=10.sp)
+                }
+            }
+            @Composable fun body(modifier: Modifier) {
+                Column(modifier,verticalArrangement=Arrangement.spacedBy(12.dp)) {
                     if(item.text.isNotBlank())SelectionContainer { MarkdownMessage(item.text,vm::imageBitmap) }
                     item.images.forEach { ImagePreview(it,vm::imageBitmap) }
                     item.files.filter{!it.image}.forEach { Text("↗ "+it.name+" · "+((it.size+1023)/1024)+" KB",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant) }
                     item.delivery?.let { Text(it,color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=11.sp) }
                 }
             }
+            if(user)Surface(color=MaterialTheme.colorScheme.surfaceVariant,shape=RoundedCornerShape(22.dp),modifier=Modifier.fillMaxWidth(0.92f).testTag("user-bubble:${item.key}")) { body(Modifier.padding(22.dp).testTag("bubble-content:${item.key}")) }
+            else body(Modifier.fillMaxWidth().padding(end=4.dp))
+            if(!user&&item.text.isNotBlank())IconButton(onClick={clipboard.setText(androidx.compose.ui.text.AnnotatedString(item.text))},modifier=Modifier.size(36.dp)) { RemoteIcon("copy","复制消息",18f) }
         }
-        if(!user&&!item.detail&&item.text.isNotBlank())IconButton(onClick={clipboard.setText(androidx.compose.ui.text.AnnotatedString(item.text))},modifier=Modifier.size(36.dp).padding(top=4.dp)) { RemoteIcon("copy","复制消息",18f) }
+    }
+}
+
+@Composable private fun WorkRecordPanel(item: ChatItem,onInspect:()->Unit) {
+    var expanded by rememberSaveable(item.key) { mutableStateOf(false) }
+    var openKeys by rememberSaveable(item.key) { mutableStateOf(emptyList<String>()) }
+    Column(Modifier.fillMaxWidth().testTag("message-row:${item.key}")) {
+        Text((if(expanded)"▾ "else "▸ ")+item.role,modifier=Modifier.fillMaxWidth().testTag("work-group:${item.key}")
+            .semantics { stateDescription=if(expanded)"已展开"else "已折叠" }.clickable{onInspect();expanded=!expanded}.padding(vertical=10.dp),
+            color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=13.sp,maxLines=1,overflow=TextOverflow.Ellipsis)
+        if(expanded)Column(Modifier.fillMaxWidth().padding(start=8.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+            item.records.forEach { record ->
+                val opened=record.key in openKeys
+                Column(Modifier.fillMaxWidth()) {
+                    Text((if(opened)"▾ "else "▸ ")+record.line,modifier=Modifier.fillMaxWidth().testTag("work-row:${record.key}")
+                        .semantics { stateDescription=if(opened)"已展开"else "已折叠" }.clickable { onInspect();openKeys=if(opened)openKeys-record.key else openKeys+record.key }
+                        .padding(horizontal=8.dp,vertical=12.dp),fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    if(opened) {
+                        Box(Modifier.fillMaxWidth().heightIn(max=280.dp).testTag("work-body:${record.key}").verticalScroll(rememberScrollState())) {
+                            SelectionContainer { Text(record.body.ifBlank { "本项暂无详细输出。" },modifier=Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=10.dp),fontSize=12.sp,lineHeight=19.sp,fontFamily=FontFamily.Monospace) }
+                        }
+                        TextButton(onClick={openKeys=openKeys-record.key},modifier=Modifier.align(Alignment.End)) { Text("收起此项",fontSize=12.sp) }
+                    }
+                }
+            }
+        }
     }
 }
 

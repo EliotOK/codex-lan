@@ -20,7 +20,7 @@ import javax.net.ssl.SSLException
 
 data class ThreadInfo(val id: String, val title: String, val project: String, val active: Boolean, val projectPath: String = "", val projectId: String? = null, val cwd: String = "")
 data class ChatImage(val reference: String, val name: String = "图片")
-data class ChatItem(val key: String, val role: String, val text: String, val detail: Boolean = false, val images: List<ChatImage> = emptyList(), val delivery: String? = null, val occurredAt: Long = 0, val files: List<UploadedFile> = emptyList())
+data class ChatItem(val key: String, val role: String, val text: String, val detail: Boolean = false, val images: List<ChatImage> = emptyList(), val delivery: String? = null, val occurredAt: Long = 0, val files: List<UploadedFile> = emptyList(), val records: List<WorkRecord> = emptyList())
 data class PendingSend(val thread: String, val prompt: String, val request: String, val choice: ModelChoice = ModelChoice(), val attachments: List<UploadedFile> = emptyList())
 data class ChatState(
     val endpoint: String = "https://192.168.1.220:8787", val paired: Boolean = false,
@@ -398,12 +398,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         fun renderTurn(turn: JSONObject): List<ChatItem> {
             val result = mutableListOf<ChatItem>()
             val items = turn.optJSONArray("items") ?: JSONArray()
-            val records = mutableListOf<Pair<String, String>>()
+            val records = mutableListOf<WorkRecord>()
             fun flushRecords() {
                 if (records.isEmpty()) return
-                val text = records.joinToString("\n\n") { it.second }
+                val text = records.joinToString("\n\n") { it.line+"\n"+it.body }
                 val display = if (text.length > 60000) text.take(60000) + "\n[记录较长，请在电脑查看完整输出]" else text
-                result += ChatItem(records.first().first, "执行记录 · ${records.size} 项", display, true)
+                result += ChatItem(records.first().key, "执行记录 · ${records.size} 项", display, true, records=records.toList())
                 records.clear()
             }
             for (i in 0 until items.length()) {
@@ -434,14 +434,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         visible.context?.takeIf{it.isNotBlank()}?.let { result += ChatItem(key+":context", "会话上下文", it, true) }
                     }
                     "agentMessage" -> {
-                        flushRecords()
-                        result += ChatItem(key, if (item.optString("phase") == "commentary") "Codex · 进度" else "Codex", item.optString("text"))
+                        val progress=WorkRecords.from(key,item)
+                        if(progress!=null)records+=progress else {
+                            flushRecords()
+                            result+=ChatItem(key,"Codex",item.optString("text"))
+                        }
                     }
-                    "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch" -> {
-                        val label = when (type) { "commandExecution" -> "执行命令"; "fileChange" -> "修改文件"; "webSearch" -> "搜索资料"; else -> "调用工具" }
-                        val status = when (item.optString("status")) { "completed" -> "已完成"; "failed" -> "失败"; "interrupted" -> "已中断"; else -> "执行中" }
-                        records += key to (label + " · " + status + "\n" + item.toString(2).take(20000))
-                    }
+                    "reasoning", "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch" -> WorkRecords.from(key,item)?.let { records+=it }
+
                 }
             }
             flushRecords()

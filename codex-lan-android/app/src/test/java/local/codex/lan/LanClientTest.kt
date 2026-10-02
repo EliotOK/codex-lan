@@ -111,15 +111,15 @@ class LanClientTest {
           {"id":"f","type":"fileChange","changes":[{"path":"app/Main.kt"}],"status":"completed"},
           {"id":"a","type":"agentMessage","phase":"final","text":"完成"}]}""")
         val items = ChatViewModel.renderTurn(t)
-        assertEquals(5, items.size)
+        assertEquals(4, items.size)
         assertEquals("你", items[0].role)
         assertEquals("开始", items[0].text)
-        assertEquals("Codex · 进度", items[1].role)
-        assertTrue(items[2].detail)
-        assertEquals("执行记录 · 2 项", items[2].role)
-        assertTrue(items[2].text.contains("git status"))
-        assertTrue(items[2].text.contains("app/Main.kt"))
-        assertEquals(5, items.map { it.key }.distinct().size)
+        assertEquals("执行记录 · 3 项", items[1].role)
+        assertTrue(items[1].detail)
+        assertEquals(3,items[1].records.size)
+        assertTrue(items[1].text.contains("git status"))
+        assertTrue(items[1].text.contains("app/Main.kt"))
+        assertEquals(4, items.map { it.key }.distinct().size)
     }
     /** Optional read-only integration against the running desktop bridge. */
     @Test fun liveDesktopPairListAndRead() {
