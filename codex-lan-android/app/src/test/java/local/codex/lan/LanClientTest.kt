@@ -114,6 +114,9 @@ class LanClientTest {
         client.pair(requireNotNull(System.getenv("LAN_TEST_CODE")))
         try {
             assertTrue(client.status().getBoolean("connected"))
+            val models=client.models()
+            assertTrue(models.isNotEmpty())
+            assertTrue(models.all { it.efforts.isNotEmpty() })
             val listing = client.threads()
             val threads = listing.getJSONArray("threads")
             val projects = listing.getJSONArray("projects")

@@ -13,7 +13,7 @@ const threadId=randomUUID();
 async function fixture(t,options={}) {
   const calls=[];
   const bridge={callerThreadId:randomUUID(),check:async()=>({connected:true}),list:async()=>({pinnedThreads:[],threads:[{id:threadId,kind:'codex',hostId:'local',title:'test'}]}),read:async id=>({thread:{id,status:{type:'active'}},turns:[]}),send:async(id,prompt)=>{calls.push({id,prompt});return{accepted:true};},...options.bridge};
-  const app=createApp({bridge,pairingCode:'12345678',lanAddresses:[],...options});
+  const app=createApp({pairingCode:'12345678',lanAddresses:[],...options,bridge});
   const server=http.createServer(app.handler);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>server.close(resolve)));
   const base=`http://127.0.0.1:${server.address().port}`;
@@ -25,6 +25,28 @@ async function fixture(t,options={}) {
   const rawHost=host=>new Promise((resolve,reject)=>{const r=http.request(base+'/api/local-info',{headers:{Host:host}},response=>{response.resume();response.on('end',()=>resolve(response.statusCode));});r.on('error',reject);r.end();});
   return{request,pair,calls,bridge,rawHost};
 }
+
+test('paired model catalog and sends validate model choices and bind request identity',async t=>{
+  const sends=[];let reads=0;
+  const f=await fixture(t,{bridge:{models:async()=>{reads++;return{models:[{id:'gpt-6-luna',efforts:['low','high','max']}]};},send:async(id,prompt,options)=>{sends.push({id,prompt,options});return{accepted:true};}}});
+  assert.equal((await f.request('/api/models')).status,401);
+  const headers=await f.pair();assert.equal((await f.request('/api/models',{headers})).data.models[0].id,'gpt-6-luna');
+  assert.equal((await f.request('/api/models?refresh=1',{headers})).status,200);
+  const requestId=randomUUID();const message={prompt:'same prompt',requestId,model:'gpt-6-luna',thinking:'high'};
+  const send=body=>f.request(`/api/threads/${threadId}/messages`,{method:'POST',headers,body:JSON.stringify(body)});
+  assert.equal((await send({...message,thinking:'ultra'})).status,400);assert.equal(sends.length,0);
+  assert.equal((await send(message)).status,200);
+  assert.equal((await send(message)).status,200);assert.equal(sends.length,1);
+  assert.equal((await send({...message,thinking:'low'})).status,409);
+  assert.deepEqual(sends[0].options,{model:'gpt-6-luna',thinking:'high'});assert.equal(reads,1);
+});
+test('unavailable model discovery rejects overrides before sending while desktop defaults remain usable',async t=>{
+ const f=await fixture(t,{bridge:{models:async()=>{throw Error('unavailable');}}});const headers=await f.pair();
+ const message={prompt:'test',requestId:randomUUID(),model:'gpt-6-luna'};
+ const send=body=>f.request(`/api/threads/${threadId}/messages`,{method:'POST',headers,body:JSON.stringify(body)});
+ const failure=await send(message);assert.equal(failure.status,400);assert.equal(failure.data.state,undefined);assert.equal(f.calls.length,0);
+ delete message.model;assert.equal((await send(message)).status,200);assert.equal(f.calls.length,1);
+});
 
 test('authentication, CSRF, host checks and fixed routes protect desktop operations',async t=>{
   const f=await fixture(t);

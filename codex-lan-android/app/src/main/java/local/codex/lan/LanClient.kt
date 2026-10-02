@@ -56,16 +56,17 @@ class LanClient(endpoint: String, certificate: ByteArray, initial: Credentials =
     }
     fun status() = execute("/api/status").first
     fun threads() = execute("/api/threads").first
+    fun models(force: Boolean = false) = ModelChoice.catalog(execute("/api/models"+if(force)"?refresh=1"else "").first)
     fun usage(force:Boolean=false) = UsageInfo.parse(execute("/api/usage"+if(force)"?refresh=1"else "").first)
     fun read(id: String, cursor: String? = null): JSONObject {
         require(Regex("[a-fA-F0-9]{8}-(?:[a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}").matches(id)) { "会话编号无效" }
         val query = cursor?.let { "?cursor=" + java.net.URLEncoder.encode(it, "UTF-8") }.orEmpty()
         return execute("/api/threads/$id$query").first
     }
-    fun send(id: String, prompt: String, requestId: String): JSONObject {
+    fun send(id: String, prompt: String, requestId: String, choice: ModelChoice = ModelChoice()): JSONObject {
         require(prompt.isNotBlank() && prompt.length <= 16000) { "消息需要在 1 至 16000 字之间" }
         require(Regex("[a-fA-F0-9]{8}-(?:[a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}").matches(id))
-        return execute("/api/threads/$id/messages", JSONObject().put("prompt", prompt).put("requestId", requestId)).first
+        return execute("/api/threads/$id/messages", choice.json().put("prompt", prompt).put("requestId", requestId)).first
     }
     fun logout() = execute("/api/logout", JSONObject()).first
     fun imageBytes(image: ChatImage): ByteArray {

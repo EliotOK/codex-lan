@@ -2,6 +2,7 @@ import net from 'node:net';
 import { readdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { modelCatalog } from './models.mjs';
 
 const MAX_FRAME = 8 * 1024 * 1024;
 export function encodeFrame(message) {
@@ -133,9 +134,13 @@ export class DesktopBridge {
   }
   list() { return this.call('list_threads', { limit: 50 }); }
   projects() { return this.call('list_projects', {}); }
+  async models() {
+    const result = await this.request('tools/list', { threadStartKind: 'all' });
+    return modelCatalog(result.tools?.find(tool => tool.namespace === 'codex_app' && tool.name === 'send_message_to_thread'));
+  }
   usage() { return this.call('get_usage_limits', {}); }
   read(threadId, cursor) {
     return this.call('read_thread', { threadId, hostId: 'local', turnLimit: 5, includeOutputs: true, maxOutputCharsPerItem: 20000, ...(cursor ? { cursor } : {}) });
   }
-  send(threadId, prompt) { return this.call('send_message_to_thread', { threadId, hostId: 'local', prompt }); }
+  send(threadId, prompt, options = {}) { return this.call('send_message_to_thread', { threadId, hostId: 'local', prompt, ...options }); }
 }

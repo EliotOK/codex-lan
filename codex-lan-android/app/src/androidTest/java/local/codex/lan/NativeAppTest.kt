@@ -215,7 +215,7 @@ class NativeAppTest {
             compose.waitUntil(30000) { vm.state.value.items.any { it.text == "桌面已收到消息" } }
             assertEquals(1, vm.state.value.items.count { it.text == prompt })
             assertNull(vm.state.value.items.single { it.text == prompt }.delivery)
-            assertEquals(0, store.read().getJSONArray("outgoing").length())
+            compose.waitUntil(10000) { store.read().getJSONArray("outgoing").length() == 0 }
             compose.onNodeWithText(prompt).assertIsDisplayed()
             assertEquals(1, sends.get())
         } finally { server.shutdown(); store.save(original) }

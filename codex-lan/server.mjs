@@ -9,6 +9,7 @@ import { DesktopBridge } from './bridge.mjs';
 import { ImageRegistry } from './images.mjs';
 import { normalizeUsage } from './usage.mjs';
 import { localProjects } from './projects.mjs';
+import { selectedModel } from './models.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
@@ -31,6 +32,12 @@ export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000
   const images=new ImageRegistry();
   let usageCache, usageFlight;
   let projectCache = [], projectUntil = 0, projectNotice = '';
+  let modelsCache, modelsFlight, modelsFetchedAt = 0;
+  async function models(force = false) {
+    if (modelsCache && Date.now()-modelsFetchedAt < (force?5000:60000)) return modelsCache;
+    if (!modelsFlight) modelsFlight = bridge.models().then(result => { modelsCache=result;modelsFetchedAt=Date.now();return result; }).finally(()=>{modelsFlight=null;});
+    return modelsFlight;
+  }
   const hashToken=token=>createHash('sha256').update(token??'').digest('hex');
   let sessionFlight=Promise.resolve(), settingsFlight=Promise.resolve();
   const persistSessions=()=>{const snapshot=[...sessions];sessionFlight=sessionFlight.catch(()=>{}).then(()=>saveSessions(snapshot));return sessionFlight;};
@@ -119,6 +126,7 @@ export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000
         return json(response,200,usageCache);
       }
       if(route==='/api/threads'&&request.method==='GET')return json(response,200,await list());
+      if(route==='/api/models'&&request.method==='GET')return json(response,200,await models(url.searchParams.get('refresh')==='1'));
       const imageRoute=route.match(/^\/api\/images\/([a-f0-9]{64})$/);
       if(imageRoute&&request.method==='GET'){
         const entry=images.entries.get(imageRoute[1]);
@@ -151,7 +159,10 @@ export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000
         if(match[2]&&request.method==='POST') {
           const body=await readBody(request);
           if(typeof body.prompt!=='string'||!body.prompt.trim()||body.prompt.length>16000||!UUID.test(body.requestId??''))return json(response,400,{error:'请输入消息（最多 16000 字），并携带有效请求 ID'});
-          const fingerprint=createHash('sha256').update(JSON.stringify([id,body.prompt])).digest('hex');
+          const options = body.model === undefined && body.thinking === undefined ? {} : selectedModel(body, await models().catch(() => {
+            throw Object.assign(new Error('模型列表暂不可用，请刷新或选择跟随桌面后发送'), {status:400});
+          }));
+          const fingerprint=createHash('sha256').update(JSON.stringify(options.model ? [id,body.prompt,options.model,options.thinking??null] : [id,body.prompt])).digest('hex');
           const known=receipts.get(body.requestId);
           if(known) {
             if(known.fingerprint!==fingerprint)return json(response,409,{error:'请求 ID 已用于另一条消息'});
@@ -164,7 +175,7 @@ export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000
           const record={id:body.requestId,fingerprint,state:'unknown',createdAt:Date.now()};
           receipts.set(record.id,record);await persist();
           try {
-            const result=await bridge.send(id,body.prompt); record.state='sent';record.result=result;await persist(); cache.delete(`${id}:`);
+            const result=await bridge.send(id,body.prompt,options); record.state='sent';record.result=result;await persist(); cache.delete(`${id}:`);
             return json(response,200,{state:'sent',result});
           } catch(error) {return json(response,502,{state:'unknown',error:`发送结果待确认：${error.message}。请查看桌面聊天后再决定是否重新发送。`});}
         }
