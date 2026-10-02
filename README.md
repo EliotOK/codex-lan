@@ -2,6 +2,8 @@
 
 原生 Android 客户端与 Windows 局域网连接服务，手机和 Codex Desktop 共享已有聊天。支持消息与进度同步、Markdown、语音转文字输入、图片预览与缩放、历史消息定位、一键回到底部、执行状态、剩余用量、草稿保存和断线恢复。
 
+主要开发原因是我的右手很不舒服不想打字QAQ，所以想躺在床上动动嘴皮就能（指挥大模型）干活。ChatGPT自带的远程控制要开VPN，很麻烦且不稳定，我希望有一个只要维持在局域网内就能秒连的客户端。
+
 ## 手机安装
 
 在手机浏览器打开本仓库的 [Releases](https://github.com/EliotOK/codex-lan/releases/latest)，下载 `codex-lan-android.apk` 并安装。需要 Android 8.0 或更新版本。下载无需登录 GitHub。
