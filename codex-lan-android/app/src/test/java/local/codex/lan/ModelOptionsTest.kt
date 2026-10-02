@@ -11,7 +11,7 @@ class ModelOptionsTest {
   assertEquals(listOf(ModelOption("gpt-6-luna",listOf("low","high","max"))),models)
  }
  @Test fun appearanceBoundsAndThemeFallbackRemainValid() {
-  assertEquals(Appearance("discord",22),Appearance.normalized("unknown",100))
+  assertEquals(Appearance("remote",22),Appearance.normalized("unknown",100))
   assertEquals(Appearance("light",14),Appearance.normalized("light",0))
  }
 }

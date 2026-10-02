@@ -122,7 +122,7 @@ export class DesktopBridge {
     return { connected: true, transport: 'desktop-native-pipe', approvals: false, tokenStreaming: false };
   }
   async call(tool, args) {
-    if (!['list_threads', 'read_thread', 'send_message_to_thread', 'get_usage_limits', 'list_projects'].includes(tool)) throw new Error('不支持的操作');
+    if (!['list_threads', 'read_thread', 'send_message_to_thread', 'get_usage_limits', 'list_projects', 'navigate_to_codex_page'].includes(tool)) throw new Error('不支持的操作');
     if (!this.callerThreadId) throw new Error('缺少连接来源聊天 ID，请从连接设置填写');
     const result = await this.request('tools/call', {
       namespace: 'codex_app', tool, arguments: args, callerSource: 'codex',
@@ -142,5 +142,6 @@ export class DesktopBridge {
   read(threadId, cursor) {
     return this.call('read_thread', { threadId, hostId: 'local', turnLimit: 5, includeOutputs: true, maxOutputCharsPerItem: 20000, ...(cursor ? { cursor } : {}) });
   }
+  openDesktop(threadId) { return this.call('navigate_to_codex_page',{threadId}); }
   send(threadId, prompt, options = {}) { return this.call('send_message_to_thread', { threadId, hostId: 'local', prompt, ...options }); }
 }

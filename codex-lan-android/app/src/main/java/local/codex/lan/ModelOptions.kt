@@ -9,6 +9,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
+fun modelDisplayName(id: String) = id.removePrefix("gpt-").split('-').joinToString(" ") { part -> part.replaceFirstChar { it.uppercase() } }
+fun ModelChoice.compactLabel() = model?.let { modelDisplayName(it)+(thinking?.let { effort -> " "+effortLabel(effort) } ?: "") } ?: "跟随桌面"
 data class ModelOption(val id: String, val efforts: List<String>)
 data class ModelChoice(val model: String? = null, val thinking: String? = null) {
     val label get() = model ?: "跟随桌面"
@@ -35,7 +37,7 @@ fun effortLabel(value: String) = when(value) { "none"->"无";"minimal"->"最低"
             if(state.modelNotice.isNotBlank())Text(state.modelNotice, color=MaterialTheme.colorScheme.error)
             FilterChip(selected=state.modelChoice.model==null, onClick={choose(ModelChoice())}, label={Text("跟随桌面当前设置")})
             state.models.forEach { option ->
-                FilterChip(selected=state.modelChoice.model==option.id, onClick={choose(ModelChoice(option.id, if("high" in option.efforts)"high"else option.efforts.firstOrNull()))}, label={Text(option.id)}, modifier=Modifier.fillMaxWidth())
+                FilterChip(selected=state.modelChoice.model==option.id, onClick={choose(ModelChoice(option.id, if("high" in option.efforts)"high"else option.efforts.firstOrNull()))}, label={Text(modelDisplayName(option.id))}, modifier=Modifier.fillMaxWidth())
             }
             state.models.firstOrNull { it.id==state.modelChoice.model }?.let { model ->
                 Text("推理强度", style=MaterialTheme.typography.titleMedium)

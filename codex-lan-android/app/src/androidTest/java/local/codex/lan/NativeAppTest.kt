@@ -3,6 +3,7 @@ package local.codex.lan
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
@@ -76,7 +77,7 @@ class NativeAppTest {
             compose.waitUntil(15000){vm.state.value.usageNotice.isNotBlank()&&!vm.state.value.usageRefreshing}
             assertTrue(vm.state.value.connected)
             compose.onNodeWithText("关闭").performClick()
-            compose.onNodeWithText("↓ 最底部").performClick()
+            if(compose.onAllNodesWithText("↓ 最底部").fetchSemanticsNodes().isNotEmpty())compose.onNodeWithText("↓ 最底部").performClick()
             compose.waitUntil(20000){compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.TestTag,"image-preview")).fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithTag("image-preview").performClick()
             compose.waitUntil(20000){imageReads.get()>=2}
@@ -93,6 +94,9 @@ class NativeAppTest {
             appended.set(true);compose.waitUntil(15000){vm.state.value.items.any{it.text=="新增回复"}}
             compose.onNodeWithText("历史锚点0").assertIsDisplayed()
             compose.onNodeWithText("↓ 最底部").performClick()
+            compose.waitForIdle()
+            compose.waitUntil(10000){try{compose.onNodeWithText("新增回复").assertIsDisplayed();true}catch(_:AssertionError){false}}
+            compose.waitForIdle()
             compose.onNodeWithText("新增回复").assertIsDisplayed()
         }finally{server.shutdown();store.save(original)}
     }
@@ -146,7 +150,7 @@ class NativeAppTest {
             assertEquals("已有草稿\n语音识别文字",vm.state.value.draft)
             assertEquals("其他会话的语音",store.read().getJSONObject("drafts").getString("another-thread"))
             assertEquals(0,sends.get())
-            compose.onNodeWithText("语音输入").assertIsDisplayed()
+            compose.onNodeWithContentDescription("语音输入").assertIsDisplayed()
             compose.runOnIdle { vm.send() }
             compose.waitUntil(20000){sends.get()==1 && !vm.state.value.sending}
             assertEquals("已有草稿\n语音识别文字",sentText.get())
@@ -251,7 +255,7 @@ class NativeAppTest {
             val vm = ViewModelProvider(compose.activity)[ChatViewModel::class.java]
             compose.runOnIdle { vm.setCertificate(cert.certificatePem().toByteArray()); vm.pair("https://127.0.0.1:${server.port}", "12345678") }
             compose.waitUntil(30000) { vm.state.value.threads.size == 5 && vm.state.value.selected == ids[0] }
-            compose.onNodeWithText("会话", useUnmergedTree = true).performClick()
+            compose.onNodeWithContentDescription("会话", useUnmergedTree = true).performClick()
             compose.onNodeWithText("C:/One/Project").assertIsDisplayed()
             compose.onNodeWithText("项目甲").assertIsDisplayed()
             assertEquals(2, ProjectGroups.from(vm.state.value.threads).first { it.key == "project:p1" }.threads.size)
@@ -288,8 +292,8 @@ class NativeAppTest {
         compose.onNodeWithText("电脑地址").performTextReplacement(address)
         compose.onNodeWithText("8 位配对码").performTextReplacement(code)
         compose.onNodeWithText("连接电脑").performClick()
-        compose.waitUntil(45000) { compose.onAllNodesWithText("● 已连接 · 同一个会话").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("会话", useUnmergedTree = true).performClick()
+        compose.waitUntil(45000) { compose.onAllNodesWithText("本地电脑 · ● 已连接").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("会话", useUnmergedTree = true).performClick()
         compose.onNodeWithText("搜索会话").performTextReplacement(title)
         compose.waitUntil(45000) { compose.onAllNodes(hasText(title) and !hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNode(hasText(title) and !hasSetTextAction()).performClick()
@@ -298,7 +302,7 @@ class NativeAppTest {
         compose.activityRule.scenario.recreate()
         compose.waitUntil(45000) { compose.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText(title).assertIsDisplayed()
-        compose.waitUntil(45000) { compose.onAllNodesWithText("● 已连接 · 同一个会话").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(45000) { compose.onAllNodesWithText("本地电脑 · ● 已连接").fetchSemanticsNodes().isNotEmpty() }
     }
     @Test fun preservesUncertainSendAcrossRestartAndRequiresManualCheck() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

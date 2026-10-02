@@ -20,8 +20,8 @@ import javax.net.ssl.SSLException
 
 data class ThreadInfo(val id: String, val title: String, val project: String, val active: Boolean, val projectPath: String = "", val projectId: String? = null, val cwd: String = "")
 data class ChatImage(val reference: String, val name: String = "图片")
-data class ChatItem(val key: String, val role: String, val text: String, val detail: Boolean = false, val images: List<ChatImage> = emptyList(), val delivery: String? = null, val occurredAt: Long = 0)
-data class PendingSend(val thread: String, val prompt: String, val request: String, val choice: ModelChoice = ModelChoice())
+data class ChatItem(val key: String, val role: String, val text: String, val detail: Boolean = false, val images: List<ChatImage> = emptyList(), val delivery: String? = null, val occurredAt: Long = 0, val files: List<UploadedFile> = emptyList())
+data class PendingSend(val thread: String, val prompt: String, val request: String, val choice: ModelChoice = ModelChoice(), val attachments: List<UploadedFile> = emptyList())
 data class ChatState(
     val endpoint: String = "https://192.168.1.220:8787", val paired: Boolean = false,
     val connected: Boolean = false, val connecting: Boolean = false, val threads: List<ThreadInfo> = emptyList(),
@@ -30,6 +30,7 @@ data class ChatState(
     val active: Boolean = false, val activityLabel: String = "就绪", val cursor: String? = null, val loadingOlder: Boolean = false,
     val pending: PendingSend? = null, val fingerprint: String = "",
     val usage: UsageInfo? = null, val usageNotice: String = "", val usageRefreshing:Boolean = false, val projectNotice: String = "",
+    val attachments: List<UploadedFile> = emptyList(), val uploading: Boolean = false, val permissionNotice: String = "权限由 Desktop 管理",
     val models: List<ModelOption> = emptyList(), val modelChoice: ModelChoice = ModelChoice(), val modelNotice: String = ""
 )
 
@@ -39,6 +40,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var client: LanClient? = null
     private var savedCredentials = Credentials()
     private val drafts = linkedMapOf<String, String>()
+    private val attachmentDrafts = linkedMapOf<String,List<UploadedFile>>()
     private val modelChoices = linkedMapOf<String, ModelChoice>()
     private fun choiceKey(thread: String = state.value.selected) = messageScope() + ":" + thread
     private var lastModelsCheck = 0L
@@ -69,14 +71,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             savedCredentials = Credentials(data.optString("token"), data.optString("csrf"))
             data.optJSONObject("drafts")?.let { values -> values.keys().forEach { drafts[it] = values.getString(it) } }
             data.optJSONObject("modelChoices")?.let { values -> values.keys().forEach { modelChoices[it] = ModelChoice.parse(values.optJSONObject(it)) } }
+            data.optJSONObject("attachmentDrafts")?.let { values -> values.keys().forEach { attachmentDrafts[it] = UploadedFile.list(values.optJSONArray(it)) } }
             val selected = data.optString("selected")
-            val pending = data.optJSONObject("pending")?.let { PendingSend(it.getString("thread"), it.getString("prompt"), it.getString("request"), ModelChoice.parse(it.optJSONObject("choice"))) }
+            val pending = data.optJSONObject("pending")?.let { PendingSend(it.getString("thread"), it.getString("prompt"), it.getString("request"), ModelChoice.parse(it.optJSONObject("choice")), UploadedFile.list(it.optJSONArray("attachments"))) }
             change { it.copy(endpoint = data.optString("endpoint", it.endpoint), selected = selected,
                 paired = savedCredentials.token.isNotBlank(), draft = drafts[selected].orEmpty(), pending = pending,
                 notice = if (pending != null) "有一条消息的发送结果待确认。请先查看对应会话。" else "") }
             outgoing.restore(data.optJSONArray("outgoing"))
-            change { it.copy(modelChoice=modelChoices[choiceKey()].let { choice -> choice ?: ModelChoice() }) }
-            if (pending != null) outgoing.add(pending.request, messageScope(), pending.thread, pending.prompt, emptyList(), "发送结果待核对")
+            change { it.copy(modelChoice=modelChoices[choiceKey()].let { choice -> choice ?: ModelChoice() },attachments=attachmentDrafts[choiceKey()].orEmpty()) }
+            if (pending != null) outgoing.add(pending.request, messageScope(), pending.thread, pending.prompt, emptyList(), "发送结果待核对", pending.attachments)
             showMessages()
             if (state.value.paired) client = LanClient(state.value.endpoint, cert, savedCredentials)
         } catch (_: Exception) {
@@ -92,8 +95,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             .put("certificate", Base64.encodeToString(cert, Base64.NO_WRAP))
             .put("token", creds.token).put("csrf", creds.csrf).put("drafts", JSONObject(drafts as Map<*, *>))
             .put("outgoing", outgoing.json())
+            .put("attachmentDrafts", JSONObject().also { values -> attachmentDrafts.forEach { (key,files) -> values.put(key,UploadedFile.json(files)) } })
             .put("modelChoices", JSONObject().also { values -> modelChoices.forEach { (key,choice) -> values.put(key,choice.json()) } })
-        s.pending?.let { data.put("pending", JSONObject().put("thread", it.thread).put("prompt", it.prompt).put("request", it.request).put("choice", it.choice.json())) }
+        s.pending?.let { data.put("pending", JSONObject().put("thread", it.thread).put("prompt", it.prompt).put("request", it.request).put("choice", it.choice.json()).put("attachments",UploadedFile.json(it.attachments))) }
         storage.save(data)
     }
     fun setCertificate(bytes: ByteArray) {
@@ -102,7 +106,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             LanClient.parseCertificate(bytes).checkValidity()
             cert = bytes; client = null; savedCredentials = Credentials(); previews.evictAll();lastUsageCheck=0L;lastModelsCheck=0L
             turns.clear()
-            change { it.copy(paired = false, connected = false, usage=null,usageNotice="",models=emptyList(),modelChoice=ModelChoice(),modelNotice="",fingerprint = LanClient.fingerprint(bytes), notice = "证书已更新，请重新配对。", error = false) }
+            change { it.copy(paired = false, connected = false, usage=null,usageNotice="",models=emptyList(),modelChoice=ModelChoice(),modelNotice="",attachments=emptyList(),fingerprint = LanClient.fingerprint(bytes), notice = "证书已更新，请重新配对。", error = false) }
             showMessages()
             persist()
         } catch (e: Exception) { report(e) }
@@ -118,7 +122,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 refreshCount = 0; turns.clear(); loadedOlder = false;lastUsageCheck=0L;lastModelsCheck=0L
                 change { it.copy(endpoint = next.base, paired = true, connected = true, threads = emptyList(), items = emptyList(), cursor = null,
                     usage=null,usageNotice="",models=emptyList(),modelChoice=modelChoices[choiceKey()] ?: ModelChoice(),modelNotice="",notice = "已配对，同步桌面会话。", error = false) }
-                change { it.copy(modelChoice=modelChoices[choiceKey()] ?: ModelChoice()) }
+                change { it.copy(modelChoice=modelChoices[choiceKey()] ?: ModelChoice(),attachments=attachmentDrafts[choiceKey()].orEmpty()) }
                 showMessages()
                 persist(); refresh()
             } catch (e: Exception) { report(e) }
@@ -170,7 +174,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val thread = state.value.threads.find { it.id == id } ?: return
         turns.clear()
         loadedOlder = false
-        change { it.copy(selected = id, title = thread.title, items = emptyList(), cursor = null, active = thread.active, draft = drafts[id].orEmpty(), modelChoice=modelChoices[choiceKey(id)] ?: ModelChoice()) }
+        change { it.copy(selected = id, title = thread.title, items = emptyList(), cursor = null, active = thread.active, draft = drafts[id].orEmpty(), modelChoice=modelChoices[choiceKey(id)] ?: ModelChoice(),attachments=attachmentDrafts[choiceKey(id)].orEmpty()) }
         showMessages()
         try { persist() } catch (e: Exception) { report(e) }
         if (refreshNow) viewModelScope.launch { refresh() }
@@ -207,6 +211,51 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             bitmap
         }catch(error:OutOfMemoryError){throw java.io.IOException("图片较大，手机内存不足，请在电脑查看")}
         finally{imageLock.release()}
+    }
+    fun uploadFiles(uris: List<android.net.Uri>) {
+        val api=client?:return;val s=state.value
+        if(s.uploading||s.sending||s.selected.isBlank()||uris.isEmpty())return
+        if(s.attachments.size+uris.size>5){showNotice("每条消息最多附加 5 个文件",true);return}
+        val key=choiceKey(s.selected)
+        change { it.copy(uploading=true,notice="正在上传附件…",error=false) }
+        viewModelScope.launch {
+            try {
+                for(uri in uris) {
+                    val priorSize=attachmentDrafts[key].orEmpty().sumOf { it.size }
+                    val file=withContext(Dispatchers.IO) {
+                        val resolver=getApplication<Application>().contentResolver
+                        val name=resolver.query(uri,arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),null,null,null)?.use { cursor -> if(cursor.moveToFirst())cursor.getString(0) else null } ?: "附件"
+                        val bytes=resolver.openInputStream(uri)?.use { input ->
+                            val output=java.io.ByteArrayOutputStream();val chunk=ByteArray(8192)
+                            while(true){val count=input.read(chunk);if(count<0)break;require(output.size()+count<=LanClient.MAX_IMAGE_BYTES){"单个文件不能超过 20 MB"};output.write(chunk,0,count)}
+                            output.toByteArray()
+                        } ?: error("无法读取文件")
+                        require(priorSize+bytes.size<=40L*1024*1024){"每条消息附件总量不能超过 40 MB"}
+                        api.upload(s.selected,UUID.randomUUID().toString(),name,bytes)
+                    }
+                    if(api!==client)break
+                    attachmentDrafts[key]=attachmentDrafts[key].orEmpty()+file
+                    while(attachmentDrafts.size>64)attachmentDrafts.remove(attachmentDrafts.keys.first())
+                    change { it.copy(attachments=if(choiceKey()==key)attachmentDrafts[key].orEmpty()else it.attachments) };persist()
+                }
+                if(api===client)showNotice("附件已上传到电脑，确认后随消息发送。")
+            } catch(e:Exception) { if(api===client)showNotice(e.message?:"附件上传失败，请重试",true) }
+            finally {change { it.copy(uploading=false) }}
+        }
+    }
+    fun removeAttachment(id: String) {
+        if(state.value.sending||state.value.uploading)return
+        val next=state.value.attachments.filter { it.id!=id };attachmentDrafts[choiceKey()]=next
+        change { it.copy(attachments=next) };try{persist()}catch(e:Exception){report(e)}
+    }
+    fun refreshPermissions() {
+        val api=client?:return;val id=state.value.selected
+        viewModelScope.launch {try { val data=withContext(Dispatchers.IO){api.permissions(id)};if(api===client&&id==state.value.selected)change{it.copy(permissionNotice=data.optString("message","权限由 Desktop 管理"))} }
+        catch(e:Exception){if(api===client)change{it.copy(permissionNotice="此连接暂不提供权限修改。请在 Desktop 输入区点击盾牌修改。")}} }
+    }
+    fun openDesktop() {
+        val api=client?:return;val id=state.value.selected
+        viewModelScope.launch {try{withContext(Dispatchers.IO){api.openDesktop(id)};showNotice("已在电脑打开当前会话，请点击输入区的盾牌修改权限。")}catch(e:Exception){report(e)} }
     }
     fun reconnect(showMessage: Boolean = true) {
         if (!state.value.paired) return
@@ -285,23 +334,24 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun send() {
         val s = state.value; val api = client ?: return
-        if (s.sending || s.selected.isEmpty() || s.draft.isBlank() || s.pending != null) return
+        if (s.sending || s.selected.isEmpty() || (s.draft.isBlank() && s.attachments.isEmpty()) || s.uploading || s.pending != null) return
         if (s.modelChoice.model != null && s.models.none { it.id==s.modelChoice.model && (s.modelChoice.thinking==null || s.modelChoice.thinking in it.efforts) }) {
             showNotice("所选模型已不可用，请刷新模型列表或选择跟随桌面。",true); return
         }
-        val pending = PendingSend(s.selected, s.draft.trim(), UUID.randomUUID().toString(), s.modelChoice)
-        try { outgoing.add(pending.request, messageScope(), pending.thread, pending.prompt, desktopItems()) }
+        val pending = PendingSend(s.selected, s.draft.trim(), UUID.randomUUID().toString(), s.modelChoice, s.attachments)
+        try { outgoing.add(pending.request, messageScope(), pending.thread, pending.prompt, desktopItems(), files=pending.attachments) }
         catch (e: Exception) { showNotice(e.message ?: "无法保存消息", true); return }
         change { it.copy(sending = true, pending = pending, notice = "正在提交到桌面会话…", error = false) }
         showMessages()
         viewModelScope.launch {
             try {
                 persist()
-                val result = withContext(Dispatchers.IO) { api.send(pending.thread, pending.prompt, pending.request, pending.choice) }
+                val result = withContext(Dispatchers.IO) { api.send(pending.thread, pending.prompt, pending.request, pending.choice, pending.attachments) }
                 check(result.optString("state") == "sent") { "发送结果待确认" }
                 outgoing.status(pending.request, "已提交 · 等待桌面同步")
                 drafts.remove(pending.thread)
-                change { it.copy(pending = null, draft = if (it.selected == pending.thread) "" else it.draft, notice = "已提交到桌面会话", error = false) }
+                attachmentDrafts.remove(messageScope()+":"+pending.thread)
+                change { it.copy(pending = null, attachments = if(it.selected==pending.thread)emptyList()else it.attachments, draft = if (it.selected == pending.thread) "" else it.draft, notice = "已提交到桌面会话", error = false) }
                 showMessages()
                 persist(); refresh()
             } catch (e: Exception) {
@@ -326,7 +376,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (state.value.sending) return
         val previous = client
         client = null; savedCredentials = Credentials(); turns.clear(); previews.evictAll();lastUsageCheck=0L;lastModelsCheck=0L
-        change { it.copy(paired = false, connected = false, usage=null,usageNotice="",models=emptyList(),modelChoice=ModelChoice(),modelNotice="",threads = emptyList(), items = emptyList(), notice = "已断开，请重新配对。", error = false) }
+        change { it.copy(paired = false, connected = false, usage=null,usageNotice="",models=emptyList(),modelChoice=ModelChoice(),modelNotice="",attachments=emptyList(),threads = emptyList(), items = emptyList(), notice = "已断开，请重新配对。", error = false) }
         try { persist() } catch (e: Exception) { report(e) }
         viewModelScope.launch { try { withContext(Dispatchers.IO) { previous?.logout() } } catch (_: Exception) { } }
     }
@@ -363,7 +413,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     "functionCallOutput" -> {
                         MessageContent.forwarded(item)?.let { text ->
                             flushRecords()
-                            result += ChatItem(key, "你", text)
+                            val visible=MessageContent.user(text)
+                            val files=UploadedFile.list(item.optJSONArray("lanAttachments"))
+                            result += ChatItem(key, "你", visible.text, files=files, images=files.mapNotNull { it.preview(turn.optString("lanThreadId")) })
+                            visible.context?.let { result += ChatItem(key+":context", "附件与会话上下文", it, true) }
                         }
                     }
                     "userMessage" -> {
@@ -376,7 +429,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         }
                         val text = (0 until content.length()).map { j -> val p = content.getJSONObject(j); when (p.optString("type")) { "text" -> p.optString("text"); "image","localImage","inputImage" -> if(p.has("imageId")||p.optString("url").startsWith("https://"))"" else "[图片暂不可用]"; else -> "[附件]" } }.filter{it.isNotBlank()}.joinToString("\n")
                         val visible = MessageContent.user(text)
-                        result += ChatItem(key, "你", visible.text.ifBlank { if(attachments.isEmpty())"[附件]"else "" }, images=attachments)
+                        val files=UploadedFile.list(item.optJSONArray("lanAttachments"))
+                        result += ChatItem(key, "你", visible.text.ifBlank { if(attachments.isEmpty())"[附件]"else "" }, images=attachments+files.mapNotNull{it.preview(turn.optString("lanThreadId"))},files=files)
                         visible.context?.takeIf{it.isNotBlank()}?.let { result += ChatItem(key+":context", "会话上下文", it, true) }
                     }
                     "agentMessage" -> {

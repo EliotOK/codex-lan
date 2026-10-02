@@ -12,19 +12,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.testTag
 
-data class Appearance(val theme: String = "discord", val fontSize: Int = 16) {
+data class Appearance(val theme: String = "remote", val fontSize: Int = 16) {
     companion object {
-        val themes = linkedMapOf("discord" to "午夜紫", "mint" to "薄荷绿", "ocean" to "海蓝", "light" to "明亮")
-        fun normalized(theme: String, size: Int) = Appearance(theme.takeIf { it in themes } ?: "discord", size.coerceIn(14, 22))
+        val themes = linkedMapOf("remote" to "经典黑", "discord" to "午夜紫", "mint" to "薄荷绿", "ocean" to "海蓝", "light" to "明亮")
+        fun normalized(theme: String, size: Int) = Appearance(theme.takeIf { it in themes } ?: "remote", size.coerceIn(14, 22))
     }
 }
 class AppearanceStore(context: Context) {
     private val prefs = context.getSharedPreferences("appearance", Context.MODE_PRIVATE)
-    fun read() = Appearance.normalized(prefs.getString("theme", "discord").orEmpty(), prefs.getInt("fontSize", 16))
+    fun read() = Appearance.normalized(prefs.getString("theme", "remote").orEmpty(), prefs.getInt("fontSize", 16))
     fun save(value: Appearance) { prefs.edit().putString("theme", value.theme).putInt("fontSize", value.fontSize).apply() }
 }
 val LocalAppearance = staticCompositionLocalOf { Appearance() }
 fun Appearance.colors(): ColorScheme = when (theme) {
+    "remote" -> darkColorScheme(primary=Color.White,onPrimary=Color.Black,background=Color.Black,surface=Color(0xFF292929),surfaceVariant=Color(0xFF303030),onBackground=Color(0xFFF4F4F4),onSurface=Color(0xFFF4F4F4),onSurfaceVariant=Color(0xFFAAAAAA))
     "light" -> lightColorScheme(primary=Color(0xFF4752C4), background=Color(0xFFF5F6FA), surface=Color.White,
         surfaceVariant=Color(0xFFE8EAF2), onBackground=Color(0xFF22252E), onSurface=Color(0xFF22252E), onSurfaceVariant=Color(0xFF515766))
     "mint" -> darkColorScheme(primary=Color(0xFFAEF3CC), onPrimary=Color(0xFF102219), background=Color(0xFF111614), surface=Color(0xFF1D2521), surfaceVariant=Color(0xFF29332D), onSurfaceVariant=Color(0xFFABBEB1))

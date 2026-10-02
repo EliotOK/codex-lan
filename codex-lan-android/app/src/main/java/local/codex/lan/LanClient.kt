@@ -63,18 +63,35 @@ class LanClient(endpoint: String, certificate: ByteArray, initial: Credentials =
         val query = cursor?.let { "?cursor=" + java.net.URLEncoder.encode(it, "UTF-8") }.orEmpty()
         return execute("/api/threads/$id$query").first
     }
-    fun send(id: String, prompt: String, requestId: String, choice: ModelChoice = ModelChoice()): JSONObject {
-        require(prompt.isNotBlank() && prompt.length <= 16000) { "消息需要在 1 至 16000 字之间" }
+    fun send(id: String, prompt: String, requestId: String, choice: ModelChoice = ModelChoice(), attachments: List<UploadedFile> = emptyList()): JSONObject {
+        require((prompt.isNotBlank() || attachments.isNotEmpty()) && prompt.length <= 16000) { "消息需要在 1 至 16000 字之间" }
         require(Regex("[a-fA-F0-9]{8}-(?:[a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}").matches(id))
-        return execute("/api/threads/$id/messages", choice.json().put("prompt", prompt).put("requestId", requestId)).first
+        return execute("/api/threads/$id/messages", choice.json().put("prompt", prompt).put("requestId", requestId).also { if(attachments.isNotEmpty())it.put("attachments",org.json.JSONArray(attachments.map { file -> file.id })) }).first
+    }
+    fun permissions(id: String) = execute("/api/threads/$id/permissions").first
+    fun openDesktop(id: String) = execute("/api/threads/$id/open-desktop", JSONObject()).first
+    fun upload(id: String, requestId: String, name: String, bytes: ByteArray): UploadedFile {
+        require(bytes.isNotEmpty() && bytes.size<=MAX_IMAGE_BYTES) { "单个文件需在 1 字节至 20 MB 之间" }
+        require(Regex("[a-fA-F0-9-]{36}").matches(id) && Regex("[a-fA-F0-9-]{36}").matches(requestId))
+        val current=credentials
+        require(Regex("[a-f0-9]{64}").matches(current.token)) { "请先配对电脑" }
+        val query="?requestId=$requestId&name="+java.net.URLEncoder.encode(name,"UTF-8")
+        val request=Request.Builder().url(base+"/api/threads/$id/uploads"+query)
+            .header("Cookie","codex_lan=${current.token}").header("X-CSRF-Token",current.csrf)
+            .post(bytes.toRequestBody("application/octet-stream".toMediaType())).build()
+        http.newCall(request).execute().use { response ->
+            val data=try{JSONObject(response.body?.string().orEmpty())}catch(_:Exception){throw ApiException(response.code,null,"附件响应无效")}
+            if(!response.isSuccessful)throw ApiException(response.code,null,data.optString("error","上传失败"))
+            return UploadedFile.parse(data)
+        }
     }
     fun logout() = execute("/api/logout", JSONObject()).first
     fun imageBytes(image: ChatImage): ByteArray {
-        val local = image.reference.startsWith("/api/images/")
+        val local = image.reference.startsWith("/api/images/") || image.reference.startsWith("/api/upload-images/")
         val request = Request.Builder()
         val transport: OkHttpClient
         if(local){
-            require(Regex("/api/images/[a-f0-9]{64}").matches(image.reference)){"图片地址无效"}
+            require((Regex("/api/images/[a-f0-9]{64}").matches(image.reference) || Regex("/api/upload-images/[a-fA-F0-9-]{36}/[a-fA-F0-9-]{36}").matches(image.reference))){"图片地址无效"}
             require(Regex("[a-f0-9]{64}").matches(credentials.token)){"请先配对电脑"}
             request.url(base+image.reference).header("Cookie","codex_lan=${credentials.token}")
             transport=reader

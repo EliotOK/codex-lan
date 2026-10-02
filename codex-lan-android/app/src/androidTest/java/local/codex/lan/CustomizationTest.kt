@@ -71,8 +71,8 @@ class CustomizationTest {
    compose.runOnIdle {vm.setCertificate(cert.certificatePem().toByteArray());vm.pair("https://127.0.0.1:${server.port}","12345678")}
    compose.waitUntil(30000) {vm.state.value.selected==id && vm.state.value.models.isNotEmpty() && vm.state.value.items.isNotEmpty()}
    screenshot("custom-chat-dark")
-   compose.onNodeWithText("模型 · 跟随桌面").performClick()
-   compose.onNodeWithText("gpt-6-luna").performClick()
+   compose.onNodeWithTag("model-picker-button").performClick()
+   compose.onNodeWithText("6 Luna").performClick()
    compose.onNodeWithText("中",substring=false).performClick()
    screenshot("model-picker")
    compose.onNodeWithText("完成").performClick()
@@ -81,12 +81,12 @@ class CustomizationTest {
    compose.runOnIdle {vm.select(other)}
    assertEquals(ModelChoice(),vm.state.value.modelChoice)
    compose.runOnIdle {vm.select(id);vm.draft("验证模型参数")}
-   compose.onNodeWithText("发送",substring=false).performClick()
+   compose.onNodeWithContentDescription("发送").performClick()
    compose.waitUntil(15000) {sent.get()!=null && !vm.state.value.sending}
    assertEquals("gpt-6-luna",sent.get().getString("model"));assertEquals("medium",sent.get().getString("thinking"))
    val restored=ChatViewModel(compose.activity.application)
    assertEquals(ModelChoice("gpt-6-luna","medium"),restored.state.value.modelChoice)
-   compose.onNodeWithText("•••").performClick();compose.onNodeWithText("外观与字号").performClick()
+   compose.onNodeWithContentDescription("菜单").performClick();compose.onNodeWithText("外观与字号").performClick()
    compose.onNodeWithText("明亮").performClick();repeat(4){compose.onNodeWithText("放大").performClick()}
    compose.onNodeWithText("完成").performClick()
    compose.onNodeWithTag("message-row:t:a").assertExists()

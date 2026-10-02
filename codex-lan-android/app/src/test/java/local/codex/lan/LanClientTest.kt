@@ -47,6 +47,22 @@ class LanClientTest {
         assertEquals("手机上的消息\n第二行", body.getString("prompt"))
         assertEquals(request, body.getString("requestId"))
     }
+    @Test fun uploadsRawBytesThenSendsAttachmentIdsAndReadsAuthenticatedPreview() = withServer { server, client ->
+        server.enqueue(response("{\"csrf\":\"csrf123\"}").setHeader("Set-Cookie","codex_lan=$token; Secure"))
+        client.pair("12345678");server.takeRequest()
+        val file=UUID.randomUUID().toString();val bytes=byteArrayOf(1,2,3)
+        server.enqueue(response("{\"id\":\"$file\",\"name\":\"照片.png\",\"size\":3,\"image\":true}"))
+        val uploaded=client.upload(id,file,"照片.png",bytes)
+        val upload=server.takeRequest();assertArrayEquals(bytes,upload.body.readByteArray())
+        assertEquals("csrf123",upload.getHeader("X-CSRF-Token"));assertEquals("codex_lan=$token",upload.getHeader("Cookie"))
+        assertTrue(upload.path!!.contains("name=%E7%85%A7%E7%89%87.png"))
+        server.enqueue(response("{\"state\":\"sent\"}"))
+        client.send(id,"",UUID.randomUUID().toString(),attachments=listOf(uploaded))
+        assertEquals(file,JSONObject(server.takeRequest().body.readUtf8()).getJSONArray("attachments").getString(0))
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(bytes)))
+        assertArrayEquals(bytes,client.imageBytes(requireNotNull(uploaded.preview(id))))
+        assertEquals("codex_lan=$token",server.takeRequest().getHeader("Cookie"))
+    }
     @Test fun redirectsAreRejectedAndSessionNotForwarded() = withServer { server, client ->
         server.enqueue(response("{\"csrf\":\"csrf123\"}").setHeader("Set-Cookie", "codex_lan=$token; Secure"))
         client.pair("12345678"); server.takeRequest()
