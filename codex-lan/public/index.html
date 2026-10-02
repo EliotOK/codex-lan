@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#101715"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon.svg"><link rel="stylesheet" href="/style.css"><title>Codex · 局域网</title></head>
+<body>
+<section id="pair-screen" class="pair-screen">
+  <div class="pair-card"><div class="brand"><span class="brand-mark">⌘</span> Codex <span class="tag">LAN</span></div>
+  <h1>把桌面聊天<br>带到手机上。</h1><p class="muted">连接这台电脑，继续同一个会话。</p>
+  <form id="pair-form"><label for="code">电脑上显示的 8 位配对码</label><input id="code" name="code" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" autocomplete="off" placeholder="0000 0000" required><button class="primary" type="submit">连接桌面 <span>↗</span></button></form>
+  <div id="setup" hidden><div class="divider"></div><h3>电脑连接面板</h3><div class="muted">手机与电脑连接同一 Wi-Fi，打开下面的地址。</div><div id="local-urls"></div><div class="code-label">本次配对码</div><div id="local-code" class="pair-code"></div><p class="muted small">局域网使用 HTTPS。首次使用需在手机信任本机证书。<a href="/cert.pem">下载公开证书</a></p><label for="caller-id">连接来源聊天 ID</label><input id="caller-id" autocomplete="off" placeholder="从这条聊天的链接取得 ID"><button id="save-caller" class="secondary" type="button">保存连接来源</button></div>
+  <p id="pair-error" class="error" role="alert"></p><p class="footnote">电脑须保持开机，Codex Desktop 须保持运行。</p></div>
+</section>
+<section id="workspace" class="workspace" hidden>
+  <aside id="sidebar"><div class="sidebar-top"><div class="brand"><span class="brand-mark">⌘</span> Codex <span class="tag">LAN</span></div><button id="close-sidebar" class="icon-button mobile-only" aria-label="关闭聊天列表">×</button></div>
+  <p class="eyebrow">这台电脑的聊天</p><input id="search" class="search" placeholder="搜索聊天…" aria-label="搜索聊天"><div id="thread-list"></div><div class="sidebar-bottom"><span class="status-dot"></span> 桌面原有会话 <button id="logout" class="text-button">断开</button></div></aside>
+  <button id="backdrop" class="backdrop" aria-label="关闭聊天列表" hidden></button>
+  <main><header><button id="open-sidebar" class="icon-button mobile-only" aria-label="打开聊天列表">☰</button><div class="header-title"><h2 id="thread-title">选择一个聊天</h2><div id="thread-meta" class="muted small">与 Codex Desktop 共享原有会话</div></div><div id="connection" class="connection"><span class="status-dot"></span><span id="connection-text">连接中</span></div></header>
+  <div id="notice" class="notice" hidden role="status"></div>
+  <div id="conversation" class="conversation"><div id="empty" class="empty"><div class="empty-mark">⌘</div><h2>工作继续，屏幕随你。</h2><p>选一个桌面聊天，查看消息和当前进度。</p></div><button id="load-older" class="secondary" hidden>加载更早的消息</button><div id="messages"></div></div>
+  <div id="new-updates" hidden><button id="jump-latest" class="secondary">查看最新消息 ↓</button></div>
+  <footer><form id="composer"><textarea id="prompt" rows="2" maxlength="16000" placeholder="给这个会话发消息…" aria-label="消息内容" disabled></textarea><div class="composer-bottom"><span id="compose-status">自动刷新 · 同一个会话</span><button id="send" class="send-button" type="submit" disabled aria-label="发送消息">↑</button></div></form><p class="footnote">进度约每秒刷新；逐字输出与手机端审批暂未接入。</p></footer>
+  </main>
+</section>
+<dialog id="connection-settings"><h2>电脑连接设置</h2><p class="muted">修改后会保存，重启服务仍使用此配对码。已配对的手机保持连接。</p><form id="pairing-settings-form"><label for="new-pairing-code">8 位配对码</label><input id="new-pairing-code" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" required><button class="primary" type="submit">保存配对码</button><button id="random-pairing-code" class="secondary" type="button">随机生成</button><button id="close-connection-settings" class="secondary" type="button">关闭</button></form><p id="settings-result" role="status"></p></dialog>
+<script type="module" src="/app.js"></script></body></html>

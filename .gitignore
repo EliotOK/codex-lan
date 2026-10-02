@@ -1,0 +1,14 @@
+**/.runtime/
+**/.gradle/
+**/.kotlin/
+**/build/
+**/node_modules/
+**/local.properties
+*.jks
+*.keystore
+*.p12
+*.key
+*.apk
+*.idsig
+.env
+.env.*

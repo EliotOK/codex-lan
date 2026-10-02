@@ -1,0 +1,60 @@
+# Codex LAN Android
+
+原生 Kotlin / Jetpack Compose 客户端，通过局域网连接配套的 Windows Codex LAN 服务。电脑与手机读写同一个已有 Codex Desktop 聊天。
+
+## 安装和连接
+
+1. 用手机浏览器从本仓库 Releases 下载 `codex-lan-android.apk`，打开安装。需要 Android 8.0 或更新版本；按系统提示允许此次安装。
+2. 电脑运行配套 `codex-lan/install-keepalive.ps1`，在电脑浏览器打开 `http://127.0.0.1:8788/`，查看当前地址和 8 位配对码。
+3. 手机和电脑连接同一局域网。应用内填写电脑面板显示的 HTTPS 地址和配对码，点击“连接电脑”。请使用当前电脑面板显示的地址。
+4. 点击“会话”选择已有聊天。手机发送的文字会提交到该桌面会话；正在执行时也可提交后续消息。
+
+发布 APK 内置公开 HTTPS 证书，仅在本应用内信任。无需安装系统证书。更换电脑或重新生成服务器证书后，在配对页面导入新的 `.pem`，核对 SHA-256 指纹后重新配对。
+
+电脑查看证书指纹：
+
+```powershell
+openssl x509 -in ..\codex-lan-certificate.pem -noout -fingerprint -sha256
+```
+
+如连接失败，确认电脑服务仍运行、地址未变化、Wi-Fi 没有客户端隔离，并检查 Windows 防火墙是否允许服务使用的 Node 程序在专用网络接收 TCP 8787。连接地址必须与证书的 IP SAN 匹配。
+
+## 功能与通信
+
+- 原生配对、搜索会话、显示 Markdown 消息、展开执行记录和会话上下文、读取更早历史和提交文字。
+- 前台约每 1.2 秒读取桌面快照；连接中断后逐步延长间隔，最长 15 秒。回到前台立即恢复同步。
+- 会话信息、证书、草稿及待核对的发送记录由 Android Keystore AES-GCM 加密保存。禁用应用备份和设备迁移，配对码不持久化。
+- HTTPS 检查证书和地址；连接仅允许局域网 IPv4 或本机隧道。禁止重定向，会话 Cookie 只发给配置的电脑。
+- 发送前保存唯一请求编号。网络中断或结果不明确时保留草稿和记录，阻止继续提交，直到手动核对；重连和重新启动不会自动重发。
+
+点击“语音输入”调用手机系统语音识别，识别结果放入当前会话草稿，确认后点击发送；Codex 返回文字。识别期间切换会话，结果仍保存在开始录音时的会话草稿。需要手机安装支持 Android 语音识别接口的服务；若系统未提供此功能，可启用手机的语音识别服务或使用输入法语音输入。应用请求优先离线识别，但是否离线、是否支持中文由手机识别服务决定。应用自身不录制或上传音频，不要求麦克风权限；系统语音服务可能自行申请麦克风权限。
+
+修改配对码：打开电脑面板 →“连接设置”→ 保存新的 8 位数字，或随机生成。新码重启后仍有效，已有登录继续有效。登录有效期为 12 小时，到期或注销后需重新配对。升级前旧服务的登录记录已经丢失时，升级后需重新配对一次。
+
+断线时应用自动重试；网络恢复或回到前台会重新读取。右上角菜单“重新连接”可立即建立新连接，保留已配对的凭证。电脑守护任务在 Windows 登录后持续运行，服务退出后约 3 秒重启并保留有效登录。电脑关机、注销或休眠会中断连接。
+
+当前桌面接口提供消息及进度快照，更新粒度取决于桌面生成的记录。权限审批仍需在电脑完成。附件显示为文字提示，本版支持文字发送，前台同步；没有后台通知。
+
+服务器必须运行在登录 Codex Desktop 的同一 Windows 用户下。桌面内部工具接口不是稳定的公开 API，升级后可能需要调整电脑桥接服务。应用不需要填写 OpenAI API 密钥。
+
+## 构建
+
+项目可直接用 Android Studio 打开。固定构建版本为 AGP 8.13.2、Gradle 8.13、Kotlin 2.2.21、Compose BOM 2025.10.00、compile/target SDK 36、min SDK 26；需要 JDK 17 或更高和 Android SDK。Gradle Wrapper 校验官方发行包 SHA-256。
+
+```powershell
+.\build.ps1 -SdkPath 'C:\path\to\android-sdk'
+```
+
+默认生成可安装的调试 APK，并执行 JVM 测试和 lint。项目构建目录中的调试密钥由首次构建自动生成。`-Variant Release` 生成未签名的发布包，请使用自己的发布密钥和 `apksigner` 签名。
+
+交付 APK 已使用本项目独立的 RSA 3072 位发布密钥签名。密钥与密码保存在当前电脑的工作材料目录 `work/signing/`，源码压缩包不包含私钥。后续覆盖安装应沿用同一密钥并提高 versionCode；丢失密钥则需要卸载旧应用后重装，手机上的本地数据也会删除。
+
+## 验证
+
+普通通信测试：`./gradlew :app:testDebugUnitTest :app:lintDebug`。
+
+可选桌面只读集成测试：设置 `LAN_TEST_ENDPOINT`、`LAN_TEST_CERT`、`LAN_TEST_CODE`、`LAN_TEST_THREAD` 后运行 JVM 测试。未设置时跳过此项。该测试只配对、列举、读取和注销，不发送桌面消息。
+
+设备测试使用 `app/src/androidTest`。对于模拟器可运行 `adb reverse tcp:8787 tcp:8787`，并给测试 runner 传入 `pairingCode`、`endpoint=https://127.0.0.1:8787` 和 `threadTitle`。电脑证书必须包含 `127.0.0.1` SAN。测试中的不确定发送由模拟 HTTPS 服务处理。
+
+依赖及说明：[Android 构建兼容性](https://developer.android.com/build/releases/agp-8-13-0-release-notes)、[Jetpack Compose](https://developer.android.com/develop/ui/compose)、[Android Keystore](https://developer.android.com/privacy-and-security/keystore)、[系统语音识别接口](https://developer.android.com/reference/android/speech/RecognizerIntent)。

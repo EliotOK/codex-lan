@@ -1,0 +1,290 @@
+package local.codex.lan
+
+import android.app.Application
+import android.util.Base64
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.UUID
+import javax.net.ssl.SSLException
+
+data class ThreadInfo(val id: String, val title: String, val project: String, val active: Boolean)
+data class ChatItem(val key: String, val role: String, val text: String, val detail: Boolean = false)
+data class PendingSend(val thread: String, val prompt: String, val request: String)
+data class ChatState(
+    val endpoint: String = "https://192.168.1.220:8787", val paired: Boolean = false,
+    val connected: Boolean = false, val connecting: Boolean = false, val threads: List<ThreadInfo> = emptyList(),
+    val selected: String = "", val title: String = "选择会话", val items: List<ChatItem> = emptyList(),
+    val draft: String = "", val sending: Boolean = false, val notice: String = "", val error: Boolean = false,
+    val active: Boolean = false, val cursor: String? = null, val loadingOlder: Boolean = false,
+    val pending: PendingSend? = null, val fingerprint: String = ""
+)
+
+class ChatViewModel(app: Application) : AndroidViewModel(app) {
+    private val storage = SecureStore(app)
+    private var cert = app.resources.openRawResource(R.raw.desktop_ca).use { it.readBytes() }
+    private var client: LanClient? = null
+    private var savedCredentials = Credentials()
+    private val drafts = linkedMapOf<String, String>()
+    private val turns = linkedMapOf<String, JSONObject>()
+    private val refreshLock = Mutex()
+    private var refreshCount = 0
+    private var loadedOlder = false
+    private val mutable = MutableStateFlow(ChatState())
+    val state = mutable.asStateFlow()
+    private fun change(transform: (ChatState) -> ChatState) { mutable.value = transform(mutable.value) }
+    init {
+        try {
+            val data = storage.read()
+            if (data.has("certificate")) {
+                val restored = Base64.decode(data.getString("certificate"), Base64.NO_WRAP)
+                LanClient.parseCertificate(restored).checkValidity()
+                cert = restored
+            }
+            savedCredentials = Credentials(data.optString("token"), data.optString("csrf"))
+            data.optJSONObject("drafts")?.let { values -> values.keys().forEach { drafts[it] = values.getString(it) } }
+            val selected = data.optString("selected")
+            val pending = data.optJSONObject("pending")?.let { PendingSend(it.getString("thread"), it.getString("prompt"), it.getString("request")) }
+            change { it.copy(endpoint = data.optString("endpoint", it.endpoint), selected = selected,
+                paired = savedCredentials.token.isNotBlank(), draft = drafts[selected].orEmpty(), pending = pending,
+                notice = if (pending != null) "有一条消息的发送结果待确认。请先查看对应会话。" else "") }
+            if (state.value.paired) client = LanClient(state.value.endpoint, cert, savedCredentials)
+        } catch (_: Exception) {
+            savedCredentials = Credentials()
+            change { it.copy(paired = false, notice = "无法读取保存的连接，请重新配对并核对最近发送的消息。", error = true) }
+        }
+        change { it.copy(fingerprint = LanClient.fingerprint(cert)) }
+    }
+    private fun persist() {
+        val s = state.value
+        val creds = client?.credentials ?: savedCredentials
+        val data = JSONObject().put("endpoint", s.endpoint).put("selected", s.selected)
+            .put("certificate", Base64.encodeToString(cert, Base64.NO_WRAP))
+            .put("token", creds.token).put("csrf", creds.csrf).put("drafts", JSONObject(drafts as Map<*, *>))
+        s.pending?.let { data.put("pending", JSONObject().put("thread", it.thread).put("prompt", it.prompt).put("request", it.request)) }
+        storage.save(data)
+    }
+    fun setCertificate(bytes: ByteArray) {
+        try {
+            require(bytes.size <= 16384) { "证书文件过大" }
+            LanClient.parseCertificate(bytes).checkValidity()
+            cert = bytes; client = null; savedCredentials = Credentials()
+            change { it.copy(paired = false, connected = false, fingerprint = LanClient.fingerprint(bytes), notice = "证书已更新，请重新配对。", error = false) }
+            persist()
+        } catch (e: Exception) { report(e) }
+    }
+    fun pair(endpoint: String, code: String) {
+        if (state.value.connecting) return
+        change { it.copy(connecting = true, notice = "正在连接电脑…", error = false) }
+        viewModelScope.launch {
+            try {
+                val next = LanClient(endpoint, cert)
+                withContext(Dispatchers.IO) { next.pair(code) }
+                client = next; savedCredentials = next.credentials
+                refreshCount = 0; turns.clear(); loadedOlder = false
+                change { it.copy(endpoint = next.base, paired = true, connected = true, threads = emptyList(), items = emptyList(), cursor = null,
+                    notice = "已配对，同步桌面会话。", error = false) }
+                persist(); refresh()
+            } catch (e: Exception) { report(e) }
+            finally { change { it.copy(connecting = false) } }
+        }
+    }
+    suspend fun poll() {
+        var pause = 1200L
+        while (kotlin.coroutines.coroutineContext.isActive) {
+            if (state.value.paired) {
+                val ok = refresh()
+                pause = if (ok) 1200 else (pause * 2).coerceAtMost(15000)
+            } else pause = 1200
+            delay(pause)
+        }
+    }
+    private suspend fun refresh(): Boolean = refreshLock.withLock {
+        val api = client ?: return@withLock false
+        try {
+            val list = if (state.value.threads.isEmpty() || refreshCount++ % 15 == 0) withContext(Dispatchers.IO) { api.threads() } else null
+            if (api !== client) return@withLock false
+            if (list != null) {
+                val values = list.optJSONArray("threads") ?: JSONArray()
+                val threads = (0 until values.length()).map { index ->
+                    val t = values.getJSONObject(index)
+                    ThreadInfo(t.getString("id"), t.optString("title", "未命名会话"), t.optString("cwd").split('/', '\\').lastOrNull().orEmpty(), isActiveStatus(t.opt("status")))
+                }.distinctBy { it.id }
+                change { it.copy(threads = threads) }
+                if (threads.none { it.id == state.value.selected }) {
+                    val preferred = threads.firstOrNull { it.active } ?: threads.firstOrNull()
+                    if (preferred != null) select(preferred.id, refreshNow = false)
+                    else change { it.copy(selected = "", items = emptyList(), title = "暂无本机会话") }
+                }
+            }
+            val id = state.value.selected
+            if (id.isNotEmpty()) {
+                val snapshot = withContext(Dispatchers.IO) { api.read(id) }
+                if (state.value.selected == id && client === api) accept(snapshot, newest = true)
+            } else withContext(Dispatchers.IO) { api.status() }
+            if (api !== client) return@withLock false
+            change { it.copy(connected = true, notice = if (!it.connected && it.error && it.pending == null) "连接已恢复" else it.notice, error = if (!it.connected && it.pending == null) false else it.error) }
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { if (client === api) report(e); false }
+    }
+    fun select(id: String, refreshNow: Boolean = true) {
+        if (id == state.value.selected && turns.isNotEmpty()) return
+        val thread = state.value.threads.find { it.id == id } ?: return
+        turns.clear()
+        loadedOlder = false
+        change { it.copy(selected = id, title = thread.title, items = emptyList(), cursor = null, active = thread.active, draft = drafts[id].orEmpty()) }
+        try { persist() } catch (e: Exception) { report(e) }
+        if (refreshNow) viewModelScope.launch { refresh() }
+    }
+    fun pauseReads() { client?.cancelReads() }
+    fun reconnect(showMessage: Boolean = true) {
+        if (!state.value.paired) return
+        val old = client ?: return
+        try {
+            old.cancelReads(); savedCredentials = old.credentials
+            client = LanClient(state.value.endpoint, cert, savedCredentials); refreshCount = 0
+            if(showMessage)change{it.copy(connected=false,notice="正在重新连接电脑…",error=false)}
+            viewModelScope.launch { refresh() }
+        } catch(e:Exception) { report(e) }
+    }
+    fun refreshNow() { reconnect() }
+    fun showNotice(text: String, error: Boolean = false) { change { it.copy(notice=text,error=error) } }
+    fun voiceResult(thread: String, text: String) {
+        if(thread.isBlank()||text.isBlank())return
+        val combined = listOf(drafts[thread].orEmpty(),text.trim()).filter{it.isNotBlank()}.joinToString("\n")
+        if(combined.length>16000){showNotice("语音文字超过消息长度限制，请缩短后再试。",true);return}
+        drafts[thread]=combined
+        change { it.copy(draft=if(it.selected==thread)combined else it.draft,notice="语音已转成文字，请确认后发送。",error=false) }
+        try{persist()}catch(e:Exception){report(e)}
+    }
+    private fun accept(snapshot: JSONObject, newest: Boolean) {
+        val incoming = snapshot.optJSONArray("turns") ?: JSONArray()
+        for (i in 0 until incoming.length()) { val t = incoming.getJSONObject(i); turns[t.getString("id")] = t }
+        val thread = snapshot.optJSONObject("thread")
+        val items = turns.values.sortedBy { it.optLong("startedAt") }.flatMap { t -> renderTurn(t) }
+        if (!newest) loadedOlder = true
+        change { it.copy(items = items, title = thread?.optString("title", it.title) ?: it.title,
+            active = isActiveStatus(thread?.opt("status")), cursor = if (newest && loadedOlder) it.cursor else snapshot.optJSONObject("page")?.optString("nextCursor")?.takeIf { c -> c.isNotBlank() && c != "null" }) }
+    }
+    fun loadOlder() {
+        val s = state.value; val cursor = s.cursor ?: return; val api = client ?: return
+        if (s.loadingOlder) return
+        change { it.copy(loadingOlder = true) }
+        viewModelScope.launch {
+            try { val snapshot = withContext(Dispatchers.IO) { api.read(s.selected, cursor) }
+                if (state.value.selected == s.selected && client === api) accept(snapshot, newest = false)
+            } catch (e: Exception) { report(e) }
+            finally { change { it.copy(loadingOlder = false) } }
+        }
+    }
+    fun draft(value: String) {
+        if (value.length > 16000) return
+        val id = state.value.selected; if (id.isEmpty()) return
+        drafts[id] = value
+        while (drafts.size > 20) drafts.remove(drafts.keys.first())
+        change { it.copy(draft = value) }
+        try { persist() } catch (e: Exception) { report(e) }
+    }
+    fun send() {
+        val s = state.value; val api = client ?: return
+        if (s.sending || s.selected.isEmpty() || s.draft.isBlank() || s.pending != null) return
+        val pending = PendingSend(s.selected, s.draft.trim(), UUID.randomUUID().toString())
+        change { it.copy(sending = true, pending = pending, notice = "正在提交到桌面会话…", error = false) }
+        viewModelScope.launch {
+            try {
+                persist()
+                val result = withContext(Dispatchers.IO) { api.send(pending.thread, pending.prompt, pending.request) }
+                check(result.optString("state") == "sent") { "发送结果待确认" }
+                drafts.remove(pending.thread)
+                change { it.copy(pending = null, draft = if (it.selected == pending.thread) "" else it.draft, notice = "已提交到桌面会话", error = false) }
+                persist(); refresh()
+            } catch (e: Exception) {
+                if (e is ApiException && e.status in listOf(400, 401, 403, 404, 429) && e.receiptState == null) change { it.copy(pending = null) }
+                report(e, sending = true)
+                try { persist() } catch (_: Exception) { }
+            } finally { change { it.copy(sending = false) } }
+        }
+    }
+    fun acknowledgePending() {
+        if (state.value.sending) return
+        change { it.copy(pending = null, notice = "已确认最近发送记录，可以继续输入。", error = false) }
+        try { persist() } catch (e: Exception) { report(e) }
+    }
+    fun disconnect() {
+        if (state.value.sending) return
+        val previous = client
+        client = null; savedCredentials = Credentials(); turns.clear()
+        change { it.copy(paired = false, connected = false, threads = emptyList(), items = emptyList(), notice = "已断开，请重新配对。", error = false) }
+        try { persist() } catch (e: Exception) { report(e) }
+        viewModelScope.launch { try { withContext(Dispatchers.IO) { previous?.logout() } } catch (_: Exception) { } }
+    }
+    fun report(error: Exception, sending: Boolean = false) {
+        if (error is kotlinx.coroutines.CancellationException) throw error
+        if (error is ApiException && error.status == 401) {
+            client = null; savedCredentials = Credentials()
+            change { it.copy(paired = false) }
+            try { persist() } catch (_: Exception) { }
+        }
+        val text = if (error is SSLException) "证书验证失败。请检查电脑地址及证书指纹，需要时导入新的电脑证书。"
+            else if(error is java.io.IOException) "暂时无法连接电脑，将自动重试。请确认同一 Wi-Fi，或点击右上角重新连接。"
+            else error.message ?: "连接失败，请检查电脑服务和同一 Wi-Fi。"
+        change { it.copy(connected = if (error is ApiException && error.status in listOf(400, 403, 404, 429)) it.connected else false,
+            notice = text + if (sending && it.pending != null) "\n发送结果待确认，请先核对会话中的消息。" else "", error = true) }
+    }
+    companion object {
+        fun isActiveStatus(value: Any?): Boolean = (if (value is JSONObject) value.optString("type") else value?.toString()) in listOf("active", "inProgress", "running")
+        fun renderTurn(turn: JSONObject): List<ChatItem> {
+            val result = mutableListOf<ChatItem>()
+            val items = turn.optJSONArray("items") ?: JSONArray()
+            val records = mutableListOf<Pair<String, String>>()
+            fun flushRecords() {
+                if (records.isEmpty()) return
+                val text = records.joinToString("\n\n") { it.second }
+                val display = if (text.length > 60000) text.take(60000) + "\n[记录较长，请在电脑查看完整输出]" else text
+                result += ChatItem(records.first().first, "执行记录 · ${records.size} 项", display, true)
+                records.clear()
+            }
+            for (i in 0 until items.length()) {
+                val item = items.getJSONObject(i); val type = item.optString("type")
+                val key = turn.optString("id") + ":" + item.optString("id", i.toString())
+                when (type) {
+                    "userMessage" -> {
+                        flushRecords()
+                        val content = item.optJSONArray("content") ?: JSONArray()
+                        val text = (0 until content.length()).map { j -> val p = content.getJSONObject(j); when (p.optString("type")) { "text" -> p.optString("text"); "image" -> "[图片]"; else -> "[附件]" } }.joinToString("\n")
+                        val visible = MessageContent.user(text)
+                        result += ChatItem(key, "你", visible.text.ifBlank { "[附件]" })
+                        visible.context?.takeIf{it.isNotBlank()}?.let { result += ChatItem(key+":context", "会话上下文", it, true) }
+                    }
+                    "agentMessage" -> {
+                        flushRecords()
+                        result += ChatItem(key, if (item.optString("phase") == "commentary") "Codex · 进度" else "Codex", item.optString("text"))
+                    }
+                    "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch" -> {
+                        val label = when (type) { "commandExecution" -> "执行命令"; "fileChange" -> "修改文件"; "webSearch" -> "搜索资料"; else -> "调用工具" }
+                        val status = when (item.optString("status")) { "completed" -> "已完成"; "failed" -> "失败"; "interrupted" -> "已中断"; else -> "执行中" }
+                        records += key to (label + " · " + status + "\n" + item.toString(2).take(20000))
+                    }
+                }
+            }
+            flushRecords()
+            when (turn.optString("status")) {
+                "completed" -> result += ChatItem(turn.optString("id") + ":end", "状态", "本轮完成")
+                "interrupted" -> result += ChatItem(turn.optString("id") + ":end", "状态", "本轮已中断")
+                "failed" -> result += ChatItem(turn.optString("id") + ":end", "状态", turn.optJSONObject("error")?.optString("message", "本轮执行失败") ?: "本轮执行失败")
+            }
+            return result
+        }
+    }
+}

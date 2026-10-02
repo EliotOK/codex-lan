@@ -1,0 +1,139 @@
+import net from 'node:net';
+import { readdir, open } from 'node:fs/promises';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+
+const MAX_FRAME = 8 * 1024 * 1024;
+export function encodeFrame(message) {
+  const body = Buffer.from(JSON.stringify(message));
+  if (body.length > MAX_FRAME) throw new Error('请求过大');
+  const result = Buffer.alloc(4 + body.length);
+  result.writeUInt32LE(body.length); body.copy(result, 4);
+  return result;
+}
+
+export class DesktopBridge {
+  constructor({ pipePath, autoPipePath, callerThreadId, logRoot } = {}) {
+    this.pipePath = pipePath;
+    this.autoPipePath = autoPipePath;
+    this.callerThreadId = callerThreadId;
+    this.logRoot = logRoot ?? path.join(process.env.LOCALAPPDATA ?? '', 'Codex', 'Logs');
+    this.pending = new Map(); this.nextId = 1; this.buffer = Buffer.alloc(0);
+  }
+  async discover() {
+    if (this.pipePath) return this.pipePath;
+    if (this.autoPipePath) return this.autoPipePath;
+    // The desktop emits its endpoint at startup. Inspect recent endpoint records only.
+    const files = [];
+    const walk = async (directory, depth) => {
+      for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
+        const full = path.join(directory, entry.name);
+        if (entry.isDirectory() && depth > 0) await walk(full, depth - 1);
+        else if (entry.isFile() && entry.name.endsWith('.log')) {const h=await open(full,'r').catch(()=>null);if(h){try{files.push({full,mtime:(await h.stat()).mtimeMs});}finally{await h.close();}}}
+      }
+    };
+    await walk(this.logRoot, 4);
+    for (const file of files.sort((a,b)=>b.mtime-a.mtime).slice(0, 24)) {
+      const handle = await open(file.full, 'r').catch(()=>null);
+      if(!handle)continue;
+      try {
+        const size = (await handle.stat()).size;
+        const bytes = Buffer.alloc(Math.min(size, 512 * 1024));
+        await handle.read(bytes, 0, bytes.length, 0);
+        let text=bytes.toString('utf8');
+        if(size>bytes.length){await handle.read(bytes,0,bytes.length,size-bytes.length);text+='\n'+bytes.toString('utf8');}
+        const hits = [...text.matchAll(/dynamic_app_tools_listening[^\r\n]*pipePath=(\\\\\.\\pipe\\[^\s\r\n]+)/g)];
+        if (hits.length) return hits.at(-1)[1];
+      } finally { await handle.close(); }
+    }
+    throw new Error('未找到桌面连接。请打开 Codex Desktop 后重试。');
+  }
+  async connect() {
+    if (this.socket && !this.socket.destroyed) return;
+    if (this.connecting) return this.connecting;
+    this.connecting = (async () => {
+      const endpoint = await this.discover();
+      await new Promise((resolve, reject) => {
+        const socket = net.createConnection(endpoint);
+        const timeout = setTimeout(() => socket.destroy(new Error('桌面连接超时')), 5000);
+        socket.once('error', reject);
+        socket.once('error',()=>{this.autoPipePath=null;});
+        socket.once('connect', () => {
+          clearTimeout(timeout); socket.off('error', reject);
+          this.socket = socket; this.buffer = Buffer.alloc(0);
+          socket.on('data', data => { if (this.socket === socket) this.onData(data); });
+          socket.on('error', error => { if (this.socket === socket) this.disconnect(error); });
+          socket.on('close', () => { if (this.socket === socket) this.disconnect(new Error('桌面连接已关闭，请重试')); });
+          resolve();
+        });
+        socket.once('close', () => clearTimeout(timeout));
+      });
+    })().finally(() => { this.connecting = null; });
+    return this.connecting;
+  }
+  onData(chunk) {
+    this.buffer = Buffer.concat([this.buffer, chunk]);
+    while (this.buffer.length >= 4) {
+      const size = this.buffer.readUInt32LE(0);
+      if (size > MAX_FRAME) { this.close(); return; }
+      if (this.buffer.length < size + 4) return;
+      const body = this.buffer.subarray(4, size + 4); this.buffer = this.buffer.subarray(size + 4);
+      let message;
+      try { message = JSON.parse(body); } catch { this.close(); return; }
+      const pending = this.pending.get(message.id);
+      if (!pending) continue;
+      this.pending.delete(message.id); clearTimeout(pending.timer);
+      if (message.error) pending.reject(new Error(message.error.message));
+      else pending.resolve(message.result);
+    }
+  }
+  disconnect(error) {
+    const socket = this.socket;
+    this.socket = null; this.buffer = Buffer.alloc(0);
+    this.autoPipePath = null;
+    socket?.destroy();
+    for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
+    this.pending.clear();
+  }
+  close() { this.socket?.destroy(); this.disconnect(new Error('桌面连接已断开')); }
+  async request(method, params, timeoutMs = 15000) {
+    await this.connect();
+    const socket = this.socket;
+    if (!socket || socket.destroyed) throw new Error('桌面连接已关闭，正在重新连接');
+    const id = this.nextId++;
+    const frame = encodeFrame({ id, jsonrpc: '2.0', method, params });
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.socket === socket) this.disconnect(new Error('桌面请求超时，连接将重新建立；发送结果可能未知，请查看聊天后再操作'));
+      }, timeoutMs);
+      this.pending.set(id, { resolve, reject, timer });
+      socket.write(frame, error => {
+        if (error && this.socket === socket) this.disconnect(error);
+      });
+    });
+  }
+  async check() {
+    const result = await this.request('tools/list', { threadStartKind: 'all' });
+    const names = new Set(result.tools?.filter(t => t.namespace === 'codex_app').map(t => t.name));
+    for (const name of ['list_threads', 'read_thread', 'send_message_to_thread']) {
+      if (!names.has(name)) throw new Error(`桌面版本缺少接口：${name}`);
+    }
+    return { connected: true, transport: 'desktop-native-pipe', approvals: false, tokenStreaming: false };
+  }
+  async call(tool, args) {
+    if (!['list_threads', 'read_thread', 'send_message_to_thread'].includes(tool)) throw new Error('不支持的操作');
+    if (!this.callerThreadId) throw new Error('缺少连接来源聊天 ID，请从连接设置填写');
+    const result = await this.request('tools/call', {
+      namespace: 'codex_app', tool, arguments: args, callerSource: 'codex',
+      threadId: this.callerThreadId, turnId: `lan-${randomUUID()}`, callId: `lan-${randomUUID()}`,
+    }, tool === 'send_message_to_thread' ? 60000 : 15000);
+    const text = result.contentItems?.filter(item => item.type === 'inputText').map(item => item.text).join('\n') ?? '';
+    if (!result.success) throw new Error(text || '桌面操作失败');
+    try { return JSON.parse(text); } catch { return { text }; }
+  }
+  list() { return this.call('list_threads', { limit: 50 }); }
+  read(threadId, cursor) {
+    return this.call('read_thread', { threadId, hostId: 'local', turnLimit: 5, includeOutputs: true, maxOutputCharsPerItem: 20000, ...(cursor ? { cursor } : {}) });
+  }
+  send(threadId, prompt) { return this.call('send_message_to_thread', { threadId, hostId: 'local', prompt }); }
+}
