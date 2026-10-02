@@ -20,7 +20,7 @@ import javax.net.ssl.SSLException
 
 data class ThreadInfo(val id: String, val title: String, val project: String, val active: Boolean)
 data class ChatImage(val reference: String, val name: String = "图片")
-data class ChatItem(val key: String, val role: String, val text: String, val detail: Boolean = false, val images: List<ChatImage> = emptyList())
+data class ChatItem(val key: String, val role: String, val text: String, val detail: Boolean = false, val images: List<ChatImage> = emptyList(), val delivery: String? = null, val occurredAt: Long = 0)
 data class PendingSend(val thread: String, val prompt: String, val request: String)
 data class ChatState(
     val endpoint: String = "https://192.168.1.220:8787", val paired: Boolean = false,
@@ -39,6 +39,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var savedCredentials = Credentials()
     private val drafts = linkedMapOf<String, String>()
     private val turns = linkedMapOf<String, JSONObject>()
+    private val outgoing = OutgoingMessages()
+    private fun messageScope() = state.value.endpoint + ":" + LanClient.fingerprint(cert)
+    private fun desktopItems() = turns.values.sortedBy { it.optLong("startedAt") }.flatMap { renderTurn(it) }
+    private fun showMessages() { change { it.copy(items = outgoing.merge(messageScope(), it.selected, desktopItems())) } }
     private val refreshLock = Mutex()
     private var refreshCount = 0
     private var loadedOlder = false
@@ -64,6 +68,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             change { it.copy(endpoint = data.optString("endpoint", it.endpoint), selected = selected,
                 paired = savedCredentials.token.isNotBlank(), draft = drafts[selected].orEmpty(), pending = pending,
                 notice = if (pending != null) "有一条消息的发送结果待确认。请先查看对应会话。" else "") }
+            outgoing.restore(data.optJSONArray("outgoing"))
+            if (pending != null) outgoing.add(pending.request, messageScope(), pending.thread, pending.prompt, emptyList(), "发送结果待核对")
+            showMessages()
             if (state.value.paired) client = LanClient(state.value.endpoint, cert, savedCredentials)
         } catch (_: Exception) {
             savedCredentials = Credentials()
@@ -77,6 +84,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val data = JSONObject().put("endpoint", s.endpoint).put("selected", s.selected)
             .put("certificate", Base64.encodeToString(cert, Base64.NO_WRAP))
             .put("token", creds.token).put("csrf", creds.csrf).put("drafts", JSONObject(drafts as Map<*, *>))
+            .put("outgoing", outgoing.json())
         s.pending?.let { data.put("pending", JSONObject().put("thread", it.thread).put("prompt", it.prompt).put("request", it.request)) }
         storage.save(data)
     }
@@ -85,7 +93,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             require(bytes.size <= 16384) { "证书文件过大" }
             LanClient.parseCertificate(bytes).checkValidity()
             cert = bytes; client = null; savedCredentials = Credentials(); previews.evictAll();lastUsageCheck=0L
+            turns.clear()
             change { it.copy(paired = false, connected = false, usage=null,usageNotice="",fingerprint = LanClient.fingerprint(bytes), notice = "证书已更新，请重新配对。", error = false) }
+            showMessages()
             persist()
         } catch (e: Exception) { report(e) }
     }
@@ -100,6 +110,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 refreshCount = 0; turns.clear(); loadedOlder = false;lastUsageCheck=0L
                 change { it.copy(endpoint = next.base, paired = true, connected = true, threads = emptyList(), items = emptyList(), cursor = null,
                     usage=null,usageNotice="",notice = "已配对，同步桌面会话。", error = false) }
+                showMessages()
                 persist(); refresh()
             } catch (e: Exception) { report(e) }
             finally { change { it.copy(connecting = false) } }
@@ -151,6 +162,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         turns.clear()
         loadedOlder = false
         change { it.copy(selected = id, title = thread.title, items = emptyList(), cursor = null, active = thread.active, draft = drafts[id].orEmpty()) }
+        showMessages()
         try { persist() } catch (e: Exception) { report(e) }
         if (refreshNow) viewModelScope.launch { refresh() }
     }
@@ -211,11 +223,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val incoming = snapshot.optJSONArray("turns") ?: JSONArray()
         for (i in 0 until incoming.length()) { val t = incoming.getJSONObject(i); turns[t.getString("id")] = t }
         val thread = snapshot.optJSONObject("thread")
-        val items = turns.values.sortedBy { it.optLong("startedAt") }.flatMap { t -> renderTurn(t) }
+        val desktop = desktopItems()
+        val reconciled = outgoing.reconcile(messageScope(), state.value.selected, desktop)
+        val items = outgoing.merge(messageScope(), state.value.selected, desktop)
         if (!newest) loadedOlder = true
         change { it.copy(items = items, title = thread?.optString("title", it.title) ?: it.title,
             activityLabel = if(newest) ActivityLabels.from(snapshot) else it.activityLabel,
             active = isActiveStatus(thread?.opt("status")), cursor = if (newest && loadedOlder) it.cursor else snapshot.optJSONObject("page")?.optString("nextCursor")?.takeIf { c -> c.isNotBlank() && c != "null" }) }
+        if (reconciled) persist()
     }
     fun loadOlder() {
         val s = state.value; val cursor = s.cursor ?: return; val api = client ?: return
@@ -240,17 +255,26 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val s = state.value; val api = client ?: return
         if (s.sending || s.selected.isEmpty() || s.draft.isBlank() || s.pending != null) return
         val pending = PendingSend(s.selected, s.draft.trim(), UUID.randomUUID().toString())
+        try { outgoing.add(pending.request, messageScope(), pending.thread, pending.prompt, desktopItems()) }
+        catch (e: Exception) { showNotice(e.message ?: "无法保存消息", true); return }
         change { it.copy(sending = true, pending = pending, notice = "正在提交到桌面会话…", error = false) }
+        showMessages()
         viewModelScope.launch {
             try {
                 persist()
                 val result = withContext(Dispatchers.IO) { api.send(pending.thread, pending.prompt, pending.request) }
                 check(result.optString("state") == "sent") { "发送结果待确认" }
+                outgoing.status(pending.request, "已提交 · 等待桌面同步")
                 drafts.remove(pending.thread)
                 change { it.copy(pending = null, draft = if (it.selected == pending.thread) "" else it.draft, notice = "已提交到桌面会话", error = false) }
+                showMessages()
                 persist(); refresh()
             } catch (e: Exception) {
-                if (e is ApiException && e.status in listOf(400, 401, 403, 404, 429) && e.receiptState == null) change { it.copy(pending = null) }
+                if (e is ApiException && e.status in listOf(400, 401, 403, 404, 429) && e.receiptState == null) {
+                    outgoing.remove(pending.request)
+                    change { it.copy(pending = null) }
+                } else outgoing.status(pending.request, "发送结果待核对")
+                showMessages()
                 report(e, sending = true)
                 try { persist() } catch (_: Exception) { }
             } finally { change { it.copy(sending = false) } }
@@ -258,7 +282,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun acknowledgePending() {
         if (state.value.sending) return
+        state.value.pending?.let { outgoing.status(it.request, "本地记录 · 已手动核对") }
         change { it.copy(pending = null, notice = "已确认最近发送记录，可以继续输入。", error = false) }
+        showMessages()
         try { persist() } catch (e: Exception) { report(e) }
     }
     fun disconnect() {
@@ -299,6 +325,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 val item = items.getJSONObject(i); val type = item.optString("type")
                 val key = turn.optString("id") + ":" + item.optString("id", i.toString())
                 when (type) {
+                    "functionCallOutput" -> {
+                        MessageContent.forwarded(item)?.let { text ->
+                            flushRecords()
+                            result += ChatItem(key, "你", text)
+                        }
+                    }
                     "userMessage" -> {
                         flushRecords()
                         val content = item.optJSONArray("content") ?: JSONArray()
@@ -329,7 +361,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 "interrupted" -> result += ChatItem(turn.optString("id") + ":end", "状态", "本轮已中断")
                 "failed" -> result += ChatItem(turn.optString("id") + ":end", "状态", turn.optJSONObject("error")?.optString("message", "本轮执行失败") ?: "本轮执行失败")
             }
-            return result
+            return result.map { it.copy(occurredAt = turn.optLong("startedAt")) }
         }
     }
 }

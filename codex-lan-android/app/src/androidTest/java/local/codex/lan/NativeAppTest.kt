@@ -153,6 +153,73 @@ class NativeAppTest {
             assertNull(vm.state.value.pending)
         } finally { server.shutdown(); store.save(original) }
     }
+    @Test fun keepsPhoneMessagesVisibleUntilForwardedHistoryArrives() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = SecureStore(context); val original = store.read()
+        val cert = HeldCertificate.Builder().addSubjectAlternativeName("127.0.0.1").build()
+        val server = MockWebServer()
+        server.useHttps(HandshakeCertificates.Builder().heldCertificate(cert).build().sslSocketFactory(), false)
+        val synced = AtomicBoolean(false)
+        val sends = AtomicInteger()
+        val id = "33333333-3333-4333-8333-333333333333"
+        val other = "44444444-4444-4444-8444-444444444444"
+        val prompt = "手机发送保留验证"
+        fun snapshot(thread: String): String {
+            val items = org.json.JSONArray().put(JSONObject().put("type", "agentMessage").put("id", "before").put("text", "已有桌面回复"))
+            if (thread == id && synced.get()) {
+                items.put(JSONObject().put("type", "functionCallOutput").put("id", "forwarded")
+                    .put("name", "send_message_to_thread").put("namespace", "codex_app")
+                    .put("output", JSONObject().put("text", "<codex_delegation><source_thread_id>same</source_thread_id><input>$prompt</input></codex_delegation>").put("truncated", false)))
+                items.put(JSONObject().put("type", "agentMessage").put("id", "after").put("text", "桌面已收到消息"))
+            }
+            return JSONObject().put("thread", JSONObject().put("id", thread).put("title", "消息显示验证"))
+                .put("turns", org.json.JSONArray().put(JSONObject().put("id", "turn").put("startedAt", 10).put("items", items)))
+                .put("page", JSONObject()).toString()
+        }
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val response = MockResponse().setHeader("Content-Type", "application/json")
+                return when (request.path) {
+                    "/api/pair" -> response.setHeader("Set-Cookie", "codex_lan=${"d".repeat(64)}; Secure").setBody("{\"csrf\":\"test-csrf\"}")
+                    "/api/threads" -> response.setBody("{\"threads\":[{\"id\":\"$id\",\"title\":\"消息显示验证\"},{\"id\":\"$other\",\"title\":\"另一会话\"}]}")
+                    "/api/threads/$id" -> response.setBody(snapshot(id))
+                    "/api/threads/$other" -> response.setBody(snapshot(other))
+                    "/api/threads/$id/messages" -> {
+                        assertEquals(prompt, JSONObject(request.body.readUtf8()).getString("prompt"))
+                        sends.incrementAndGet()
+                        response.setBody("{\"state\":\"sent\"}").setBodyDelay(1200, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    }
+                    else -> response.setBody("{\"connected\":true}")
+                }
+            }
+        }
+        server.start()
+        try {
+            val vm = ViewModelProvider(compose.activity)[ChatViewModel::class.java]
+            compose.runOnIdle { vm.setCertificate(cert.certificatePem().toByteArray()); vm.pair("https://127.0.0.1:${server.port}", "12345678") }
+            compose.waitUntil(30000) { vm.state.value.selected == id && vm.state.value.items.isNotEmpty() }
+            compose.runOnIdle { vm.draft(prompt); vm.send() }
+            assertEquals("正在发送", vm.state.value.items.single { it.text == prompt }.delivery)
+            compose.waitUntil(30000) { !vm.state.value.sending && vm.state.value.draft.isEmpty() }
+            compose.onNodeWithText(prompt).assertIsDisplayed()
+            assertEquals(1, store.read().getJSONArray("outgoing").length())
+            val restored = ChatViewModel(context.applicationContext as android.app.Application)
+            assertEquals(prompt, restored.state.value.items.single().text)
+            assertNull(restored.state.value.pending)
+            compose.runOnIdle { vm.select(other) }
+            assertFalse(vm.state.value.items.any { it.text == prompt })
+            compose.runOnIdle { vm.select(id) }
+            compose.waitUntil(30000) { vm.state.value.items.any { it.text == prompt } }
+            synced.set(true)
+            compose.runOnIdle { vm.refreshNow() }
+            compose.waitUntil(30000) { vm.state.value.items.any { it.text == "桌面已收到消息" } }
+            assertEquals(1, vm.state.value.items.count { it.text == prompt })
+            assertNull(vm.state.value.items.single { it.text == prompt }.delivery)
+            assertEquals(0, store.read().getJSONArray("outgoing").length())
+            compose.onNodeWithText(prompt).assertIsDisplayed()
+            assertEquals(1, sends.get())
+        } finally { server.shutdown(); store.save(original) }
+    }
     @Test fun pairReadAndRestoreDesktopChat() {
         val args = InstrumentationRegistry.getArguments()
         val code = requireNotNull(args.getString("pairingCode")) { "Pass -e pairingCode for read-only desktop integration" }

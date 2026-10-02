@@ -318,6 +318,7 @@ class MainActivity : ComponentActivity() {
                 else Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
                     MarkdownMessage(item.text,vm::imageBitmap)
                     item.images.forEach{ImagePreview(it,vm::imageBitmap)}
+                    item.delivery?.let { Text(it, color = Color(0xFF91A799), fontSize = 11.sp) }
                 }
             }
         }

@@ -12,6 +12,8 @@
 
 手机与电脑连接同一局域网，填写电脑连接面板显示的 HTTPS 地址和 8 位配对码。选择已有会话后即可继续聊天。语音识别结果放进消息框，确认后发送，Codex 返回文字；识别服务由手机系统提供。
 
+0.4.1 修复手机发送的消息显示：发送时立即保留正文，刷新或重启后继续显示；读取桌面转发记录时恢复历史输入，并与本地气泡合并。
+
 ## 电脑服务
 
 需要 Windows、Node.js 22 或更新版本和 OpenSSL，并在同一 Windows 用户下打开 Codex Desktop。
@@ -29,8 +31,8 @@ cd codex-lan
 
 - [`codex-lan/`](codex-lan/README.md)：电脑服务、网页连接面板与 14 项服务器测试。
 - [`codex-lan-android/`](codex-lan-android/README.md)：Kotlin / Compose 客户端与 Android 构建说明。
-- [`安卓验证记录`](codex-lan-android/VALIDATION.md)：0.4.0 的 22 项 JVM、10 项 Android 15 设备测试、真实 GitHub 下载及系统安装确认验证。
+- [`安卓验证记录`](codex-lan-android/VALIDATION.md)：0.4.1 的 27 项 JVM 和 6 项 Android 15 聊天设备测试，以及此前版本的更新与安装确认验证。
 
 服务和守护任务读取已有记录，不主动发送消息或调用模型。前台约每 1.2 秒同步桌面快照；手机审批仍需在电脑完成。电脑关机、注销或休眠会中断连接。桌面桥接使用内部本地接口，Codex Desktop 更新可能影响兼容性。
 
-下载文件的 SHA-256 在 Release 的 `SHA256SUMS.txt` 中。0.4.0 发布包采用同一项目签名，可覆盖安装已有版本。
+下载文件的 SHA-256 在 Release 的 `SHA256SUMS.txt` 中。0.4.1 发布包采用同一项目签名，可覆盖安装已有版本。

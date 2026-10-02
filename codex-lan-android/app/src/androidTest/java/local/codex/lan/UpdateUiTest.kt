@@ -34,7 +34,8 @@ class UpdateUiTest {
         val instrumentation=InstrumentationRegistry.getInstrumentation();val app=instrumentation.targetContext.applicationContext as android.app.Application
         val path=requireNotNull(InstrumentationRegistry.getArguments().getString("updateApkPath")){"Pass a signed newer APK for installer integration"}
         val candidate=File(path);val hash=java.security.MessageDigest.getInstance("SHA-256").digest(candidate.readBytes()).joinToString(""){"%02x".format(it)}
-        val release=UpdateRelease("0.4.1","安装链路验证","",candidate.length(),hash)
+        val candidateVersion=requireNotNull(app.packageManager.getPackageArchiveInfo(candidate.absolutePath,0)?.versionName){"Fixture must be an APK"}
+        val release=UpdateRelease(candidateVersion,"安装链路验证","",candidate.length(),hash)
         val source=object:UpdateSource {
             override fun latest()=release
             override fun download(release:UpdateRelease,target:File,progress:(Int)->Unit){target.parentFile?.mkdirs();candidate.copyTo(target,overwrite=true);progress(100)}
