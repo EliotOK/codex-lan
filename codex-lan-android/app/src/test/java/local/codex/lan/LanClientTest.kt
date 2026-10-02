@@ -114,7 +114,20 @@ class LanClientTest {
         client.pair(requireNotNull(System.getenv("LAN_TEST_CODE")))
         try {
             assertTrue(client.status().getBoolean("connected"))
-            val threads = client.threads().getJSONArray("threads")
+            val listing = client.threads()
+            val threads = listing.getJSONArray("threads")
+            val projects = listing.getJSONArray("projects")
+            assertEquals("", listing.optString("projectsNotice"))
+            val parsed = ProjectGroups.parseThreads(listing)
+            val names = (0 until projects.length()).map { projects.getJSONObject(it) }.associate { it.getString("projectId") to it.getString("label") }
+            for (i in 0 until threads.length()) {
+                val raw = threads.getJSONObject(i)
+                val expectedId = raw.optString("projectId").takeIf { it.isNotBlank() && it != "null" }
+                val item = parsed.first { it.id == raw.getString("id") }
+                assertEquals(expectedId, item.projectId)
+                if (expectedId == null) assertEquals("", item.project)
+                else names[expectedId]?.let { assertEquals(it, item.project) }
+            }
             assertTrue(threads.length() > 0)
             val target = System.getenv("LAN_TEST_THREAD") ?: threads.getJSONObject(0).getString("id")
             val snapshot = client.read(target)

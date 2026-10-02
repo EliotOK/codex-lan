@@ -225,17 +225,19 @@ class NativeAppTest {
         val cert = HeldCertificate.Builder().addSubjectAlternativeName("127.0.0.1").build()
         val server = MockWebServer()
         server.useHttps(HandshakeCertificates.Builder().heldCertificate(cert).build().sslSocketFactory(), false)
-        val ids = listOf("55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666", "77777777-7777-4777-8777-777777777777", "88888888-8888-4888-8888-888888888888")
-        val titles = listOf("第一条会话", "第二条会话", "第三条会话", "独立会话")
-        val paths = listOf("C:\\One\\Project\\", "c:/one/project", "D:/Two/Project", "")
+        val ids = listOf("55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666", "77777777-7777-4777-8777-777777777777", "88888888-8888-4888-8888-888888888888", "99999999-9999-4999-8999-999999999999")
+        val titles = listOf("第一条会话", "第二条会话", "第三条会话", "独立会话", "临时会话")
+        val paths = listOf("C:\\One\\Project\\subfolder", "D:/worktree", "D:/Two/Project", "C:/Codex/ce", "C:/Codex/c-j")
+        val projects = listOf("p1", "p1", "p2", null, null)
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val response = MockResponse().setHeader("Content-Type", "application/json")
                 return when (request.path) {
                     "/api/pair" -> response.setHeader("Set-Cookie", "codex_lan=${"e".repeat(64)}; Secure").setBody("{\"csrf\":\"test-csrf\"}")
                     "/api/threads" -> response.setBody(JSONObject().put("threads", org.json.JSONArray().also { array ->
-                        ids.forEachIndexed { index, id -> array.put(JSONObject().put("id", id).put("title", titles[index]).put("cwd", paths[index])) }
-                    }).toString())
+                        ids.forEachIndexed { index, id -> array.put(JSONObject().put("id", id).put("title", titles[index]).put("cwd", paths[index]).put("projectId", projects[index] ?: JSONObject.NULL)) }
+                    }).put("projects", org.json.JSONArray().put(JSONObject().put("projectId", "p1").put("label", "项目甲").put("path", "C:/One/Project"))
+                        .put(JSONObject().put("projectId", "p2").put("label", "项目乙").put("path", "D:/Two/Project"))).toString())
                     else -> {
                         val index = ids.indexOf(request.path?.substringAfterLast('/')).coerceAtLeast(0)
                         response.setBody(JSONObject().put("thread", JSONObject().put("id", ids[index]).put("title", titles[index]))
@@ -248,11 +250,12 @@ class NativeAppTest {
         try {
             val vm = ViewModelProvider(compose.activity)[ChatViewModel::class.java]
             compose.runOnIdle { vm.setCertificate(cert.certificatePem().toByteArray()); vm.pair("https://127.0.0.1:${server.port}", "12345678") }
-            compose.waitUntil(30000) { vm.state.value.threads.size == 4 && vm.state.value.selected == ids[0] }
+            compose.waitUntil(30000) { vm.state.value.threads.size == 5 && vm.state.value.selected == ids[0] }
             compose.onNodeWithText("会话", useUnmergedTree = true).performClick()
             compose.onNodeWithText("C:/One/Project").assertIsDisplayed()
-            compose.onNodeWithText("2 个会话").assertIsDisplayed()
-            compose.onNodeWithTag("project-header:path:c:/one/project").performClick()
+            compose.onNodeWithText("项目甲").assertIsDisplayed()
+            assertEquals(2, ProjectGroups.from(vm.state.value.threads).first { it.key == "project:p1" }.threads.size)
+            compose.onNodeWithTag("project-header:project:p1").performClick()
             assertTrue(compose.onAllNodesWithText(titles[0]).fetchSemanticsNodes().isEmpty())
             compose.activityRule.scenario.recreate()
             compose.waitUntil(15000) { compose.onAllNodesWithText("搜索会话").fetchSemanticsNodes().isNotEmpty() }
@@ -261,12 +264,16 @@ class NativeAppTest {
             compose.onNodeWithText(titles[0]).assertIsDisplayed()
             compose.onNodeWithText(titles[1]).assertIsDisplayed()
             assertTrue(compose.onAllNodesWithText("D:/Two/Project").fetchSemanticsNodes().isEmpty())
-            compose.onNodeWithText("搜索会话").performTextReplacement("其他会话")
+            compose.onNodeWithText("搜索会话").performTextReplacement("未分组")
             compose.onNodeWithText("独立会话").assertIsDisplayed()
+            compose.onNodeWithText("临时会话").assertIsDisplayed()
+            assertEquals(2, ProjectGroups.from(vm.state.value.threads).first { it.key == "unassigned" }.threads.size)
+            screenshot("unassigned")
             compose.onNodeWithText("搜索会话").performTextReplacement("没有匹配的项目")
             compose.onNodeWithText("没有匹配的会话").assertIsDisplayed()
             compose.onNodeWithText("搜索会话").performTextReplacement("第三条")
             compose.onNodeWithText("D:/Two/Project").assertIsDisplayed()
+            compose.onNodeWithText("项目乙").assertIsDisplayed()
             screenshot("projects")
             compose.onNodeWithText(titles[2]).performClick()
             compose.waitUntil(15000) { vm.state.value.selected == ids[2] }

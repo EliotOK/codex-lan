@@ -192,6 +192,7 @@ class MainActivity : ComponentActivity() {
     val groups = remember(state.threads, search) { ProjectGroups.from(state.threads, search) }
     Column(modifier.fillMaxWidth()) {
         OutlinedTextField(search, { search = it }, label = { Text("搜索会话") }, placeholder = { Text("会话名称、项目或路径") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(16.dp))
+        if (state.projectNotice.isNotBlank()) Text(state.projectNotice, Modifier.padding(horizontal = 16.dp), color = Color(0xFF91A799), fontSize = 11.sp)
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (state.threads.isEmpty()) item { Text("正在读取本机会话…", Modifier.padding(12.dp), color = Color(0xFFA3B1A8)) }
             else if (groups.isEmpty()) item { Text("没有匹配的会话", Modifier.padding(12.dp), color = Color(0xFFA3B1A8)) }

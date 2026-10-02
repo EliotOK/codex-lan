@@ -18,7 +18,7 @@ import org.json.JSONObject
 import java.util.UUID
 import javax.net.ssl.SSLException
 
-data class ThreadInfo(val id: String, val title: String, val project: String, val active: Boolean, val projectPath: String = "")
+data class ThreadInfo(val id: String, val title: String, val project: String, val active: Boolean, val projectPath: String = "", val projectId: String? = null, val cwd: String = "")
 data class ChatImage(val reference: String, val name: String = "图片")
 data class ChatItem(val key: String, val role: String, val text: String, val detail: Boolean = false, val images: List<ChatImage> = emptyList(), val delivery: String? = null, val occurredAt: Long = 0)
 data class PendingSend(val thread: String, val prompt: String, val request: String)
@@ -29,7 +29,7 @@ data class ChatState(
     val draft: String = "", val sending: Boolean = false, val notice: String = "", val error: Boolean = false,
     val active: Boolean = false, val activityLabel: String = "就绪", val cursor: String? = null, val loadingOlder: Boolean = false,
     val pending: PendingSend? = null, val fingerprint: String = "",
-    val usage: UsageInfo? = null, val usageNotice: String = "", val usageRefreshing:Boolean = false
+    val usage: UsageInfo? = null, val usageNotice: String = "", val usageRefreshing:Boolean = false, val projectNotice: String = ""
 )
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
@@ -132,13 +132,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             val list = if (state.value.threads.isEmpty() || refreshCount++ % 15 == 0) withContext(Dispatchers.IO) { api.threads() } else null
             if (api !== client) return@withLock false
             if (list != null) {
-                val values = list.optJSONArray("threads") ?: JSONArray()
-                val threads = (0 until values.length()).map { index ->
-                    val t = values.getJSONObject(index)
-                    val projectPath = ProjectGroups.path(t.optString("cwd"))
-                    ThreadInfo(t.getString("id"), t.optString("title", "未命名会话"), ProjectGroups.name(projectPath), isActiveStatus(t.opt("status")), projectPath)
-                }.distinctBy { it.id }
-                change { it.copy(threads = threads) }
+                val threads = ProjectGroups.parseThreads(list)
+                val projectNotice = list.optString("projectsNotice").ifBlank {
+                    if (!list.has("projects") && threads.any { it.projectId != null }) "请更新电脑服务，以显示 Desktop 的项目名称。" else ""
+                }
+                change { it.copy(threads = threads, projectNotice = projectNotice) }
                 if (threads.none { it.id == state.value.selected }) {
                     val preferred = threads.firstOrNull { it.active } ?: threads.firstOrNull()
                     if (preferred != null) select(preferred.id, refreshNow = false)

@@ -41,6 +41,22 @@ test('authentication, CSRF, host checks and fixed routes protect desktop operati
   assert.equal(f.calls.length,0);
 });
 
+test('thread list joins saved local projects and preserves explicit unassigned membership',async t=>{
+  let reads=0; const projectId='project-id';
+  const f=await fixture(t,{bridge:{list:async()=>({threads:[{id:threadId,kind:'codex',hostId:'local',projectId,cwd:'D:/root/subfolder'},{id:randomUUID(),kind:'codex',hostId:'local',projectId:null,cwd:'C:/Codex/ce'}]}),
+    projects:async()=>{reads++;return{projects:[{projectId,label:'自定义名称',projectKind:'local',hostId:'local',path:'D:/root',privateField:'omit'},
+      {projectId:'remote',label:'remote',projectKind:'local',hostId:'other'},{projectId:'cloud',label:'cloud',projectKind:'chatgpt'}]};}}});
+  const headers=await f.pair(); const response=await f.request('/api/threads',{headers});
+  assert.deepEqual(response.data.projects,[{projectId,label:'自定义名称',path:'D:/root'}]);
+  assert.equal(response.data.threads[0].projectId,projectId);assert.equal(response.data.threads[1].projectId,null);
+  await f.request('/api/threads',{headers});assert.equal(reads,1);
+});
+test('project metadata failures keep chat list and project identity available',async t=>{
+  const f=await fixture(t,{bridge:{list:async()=>({threads:[{id:threadId,kind:'codex',hostId:'local',projectId:'project-id'}]}),projects:async()=>{throw Error('unavailable');}}});
+  const headers=await f.pair();const result=await f.request('/api/threads',{headers});
+  assert.equal(result.status,200);assert.equal(result.data.threads[0].projectId,'project-id');
+  assert.deepEqual(result.data.projects,[]);assert.ok(result.data.projectsNotice);
+});
 test('a message request is durably recorded and repeated submissions are forwarded once',async t=>{
   const tempRoot=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(tempRoot,{recursive:true});
   const directory=await mkdtemp(path.join(tempRoot,'receipts-'));

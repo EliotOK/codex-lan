@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { DesktopBridge } from './bridge.mjs';
 import { ImageRegistry } from './images.mjs';
 import { normalizeUsage } from './usage.mjs';
+import { localProjects } from './projects.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
@@ -29,6 +30,7 @@ export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000
   const sessions=new Map(initialSessions.filter(([hash,s])=>/^[a-f0-9]{64}$/.test(hash)&&s.expires>Date.now()&&typeof s.csrf==='string')), attempts=new Map(), allowedThreads=new Set(), cache=new Map();
   const images=new ImageRegistry();
   let usageCache, usageFlight;
+  let projectCache = [], projectUntil = 0, projectNotice = '';
   const hashToken=token=>createHash('sha256').update(token??'').digest('hex');
   let sessionFlight=Promise.resolve(), settingsFlight=Promise.resolve();
   const persistSessions=()=>{const snapshot=[...sessions];sessionFlight=sessionFlight.catch(()=>{}).then(()=>saveSessions(snapshot));return sessionFlight;};
@@ -42,10 +44,16 @@ export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000
   const persist=()=>{if(receiptPath) saveFlight=saveFlight.catch(()=>{}).then(()=>writeFile(receiptPath,JSON.stringify([...receipts.values()]),{mode:0o600})); return saveFlight;};
   async function list() {
     if(listFlight)return listFlight;
-    listFlight=bridge.list().then(result=>{
+    listFlight=bridge.list().then(async result=>{
       const threads=[...(result.pinnedThreads??[]),...(result.threads??[])].filter(t=>t.kind==='codex' && (t.hostId??'local')==='local');
       allowedThreads.clear(); threads.forEach(t=>allowedThreads.add(t.id));
-      return {threads};
+      if (Date.now() >= projectUntil) {
+        projectUntil = Date.now() + 60000;
+        try {
+          projectCache = localProjects(await bridge.projects()); projectNotice = '';
+        } catch { projectNotice = '项目名称暂不可用，请稍后刷新或更新电脑服务。'; }
+      }
+      return {threads, projects: projectCache, projectsNotice: projectNotice};
     }).finally(()=>{listFlight=null});
     return listFlight;
   }
