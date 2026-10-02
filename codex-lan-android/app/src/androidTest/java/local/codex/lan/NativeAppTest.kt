@@ -220,6 +220,59 @@ class NativeAppTest {
             assertEquals(1, sends.get())
         } finally { server.shutdown(); store.save(original) }
     }
+    @Test fun groupsProjectsCollapsesSearchesAndSelectsOriginalThread() {
+        val store = SecureStore(InstrumentationRegistry.getInstrumentation().targetContext); val original = store.read()
+        val cert = HeldCertificate.Builder().addSubjectAlternativeName("127.0.0.1").build()
+        val server = MockWebServer()
+        server.useHttps(HandshakeCertificates.Builder().heldCertificate(cert).build().sslSocketFactory(), false)
+        val ids = listOf("55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666", "77777777-7777-4777-8777-777777777777", "88888888-8888-4888-8888-888888888888")
+        val titles = listOf("第一条会话", "第二条会话", "第三条会话", "独立会话")
+        val paths = listOf("C:\\One\\Project\\", "c:/one/project", "D:/Two/Project", "")
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val response = MockResponse().setHeader("Content-Type", "application/json")
+                return when (request.path) {
+                    "/api/pair" -> response.setHeader("Set-Cookie", "codex_lan=${"e".repeat(64)}; Secure").setBody("{\"csrf\":\"test-csrf\"}")
+                    "/api/threads" -> response.setBody(JSONObject().put("threads", org.json.JSONArray().also { array ->
+                        ids.forEachIndexed { index, id -> array.put(JSONObject().put("id", id).put("title", titles[index]).put("cwd", paths[index])) }
+                    }).toString())
+                    else -> {
+                        val index = ids.indexOf(request.path?.substringAfterLast('/')).coerceAtLeast(0)
+                        response.setBody(JSONObject().put("thread", JSONObject().put("id", ids[index]).put("title", titles[index]))
+                            .put("turns", org.json.JSONArray()).put("page", JSONObject()).toString())
+                    }
+                }
+            }
+        }
+        server.start()
+        try {
+            val vm = ViewModelProvider(compose.activity)[ChatViewModel::class.java]
+            compose.runOnIdle { vm.setCertificate(cert.certificatePem().toByteArray()); vm.pair("https://127.0.0.1:${server.port}", "12345678") }
+            compose.waitUntil(30000) { vm.state.value.threads.size == 4 && vm.state.value.selected == ids[0] }
+            compose.onNodeWithText("会话", useUnmergedTree = true).performClick()
+            compose.onNodeWithText("C:/One/Project").assertIsDisplayed()
+            compose.onNodeWithText("2 个会话").assertIsDisplayed()
+            compose.onNodeWithTag("project-header:path:c:/one/project").performClick()
+            assertTrue(compose.onAllNodesWithText(titles[0]).fetchSemanticsNodes().isEmpty())
+            compose.activityRule.scenario.recreate()
+            compose.waitUntil(15000) { compose.onAllNodesWithText("搜索会话").fetchSemanticsNodes().isNotEmpty() }
+            assertTrue(compose.onAllNodesWithText(titles[0]).fetchSemanticsNodes().isEmpty())
+            compose.onNodeWithText("搜索会话").performTextReplacement("C:/One")
+            compose.onNodeWithText(titles[0]).assertIsDisplayed()
+            compose.onNodeWithText(titles[1]).assertIsDisplayed()
+            assertTrue(compose.onAllNodesWithText("D:/Two/Project").fetchSemanticsNodes().isEmpty())
+            compose.onNodeWithText("搜索会话").performTextReplacement("其他会话")
+            compose.onNodeWithText("独立会话").assertIsDisplayed()
+            compose.onNodeWithText("搜索会话").performTextReplacement("没有匹配的项目")
+            compose.onNodeWithText("没有匹配的会话").assertIsDisplayed()
+            compose.onNodeWithText("搜索会话").performTextReplacement("第三条")
+            compose.onNodeWithText("D:/Two/Project").assertIsDisplayed()
+            screenshot("projects")
+            compose.onNodeWithText(titles[2]).performClick()
+            compose.waitUntil(15000) { vm.state.value.selected == ids[2] }
+            compose.onNodeWithText(titles[2]).assertIsDisplayed()
+        } finally { server.shutdown(); store.save(original) }
+    }
     @Test fun pairReadAndRestoreDesktopChat() {
         val args = InstrumentationRegistry.getArguments()
         val code = requireNotNull(args.getString("pairingCode")) { "Pass -e pairingCode for read-only desktop integration" }

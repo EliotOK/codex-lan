@@ -18,7 +18,7 @@ import org.json.JSONObject
 import java.util.UUID
 import javax.net.ssl.SSLException
 
-data class ThreadInfo(val id: String, val title: String, val project: String, val active: Boolean)
+data class ThreadInfo(val id: String, val title: String, val project: String, val active: Boolean, val projectPath: String = "")
 data class ChatImage(val reference: String, val name: String = "图片")
 data class ChatItem(val key: String, val role: String, val text: String, val detail: Boolean = false, val images: List<ChatImage> = emptyList(), val delivery: String? = null, val occurredAt: Long = 0)
 data class PendingSend(val thread: String, val prompt: String, val request: String)
@@ -135,7 +135,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 val values = list.optJSONArray("threads") ?: JSONArray()
                 val threads = (0 until values.length()).map { index ->
                     val t = values.getJSONObject(index)
-                    ThreadInfo(t.getString("id"), t.optString("title", "未命名会话"), t.optString("cwd").split('/', '\\').lastOrNull().orEmpty(), isActiveStatus(t.opt("status")))
+                    val projectPath = ProjectGroups.path(t.optString("cwd"))
+                    ThreadInfo(t.getString("id"), t.optString("title", "未命名会话"), ProjectGroups.name(projectPath), isActiveStatus(t.opt("status")), projectPath)
                 }.distinctBy { it.id }
                 change { it.copy(threads = threads) }
                 if (threads.none { it.id == state.value.selected }) {

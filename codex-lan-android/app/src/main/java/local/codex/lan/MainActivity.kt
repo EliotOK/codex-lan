@@ -31,6 +31,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -185,16 +188,39 @@ class MainActivity : ComponentActivity() {
 }
 @Composable private fun ThreadList(state: ChatState, onSelect: (String) -> Unit, modifier: Modifier) {
     var search by rememberSaveable { mutableStateOf("") }
+    var collapsed by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val groups = remember(state.threads, search) { ProjectGroups.from(state.threads, search) }
     Column(modifier.fillMaxWidth()) {
-        OutlinedTextField(search, { search = it }, label = { Text("搜索会话") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(16.dp))
+        OutlinedTextField(search, { search = it }, label = { Text("搜索会话") }, placeholder = { Text("会话名称、项目或路径") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(16.dp))
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (state.threads.isEmpty()) item { Text("正在读取本机会话…", Modifier.padding(12.dp), color = Color(0xFFA3B1A8)) }
-            items(state.threads.filter { it.title.contains(search, ignoreCase = true) }, key = { it.id }) { thread ->
-                Surface(shape = MaterialTheme.shapes.medium, color = if (thread.id == state.selected) Color(0xFF283C30) else SurfaceColor,
-                    modifier = Modifier.fillMaxWidth().clickable { onSelect(thread.id) }) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(thread.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-                        Text((if (thread.active) "● 正在执行 · " else "") + thread.project.ifBlank { "本机会话" }, color = Color(0xFF91A799), fontSize = 12.sp)
+            else if (groups.isEmpty()) item { Text("没有匹配的会话", Modifier.padding(12.dp), color = Color(0xFFA3B1A8)) }
+            groups.forEach { group ->
+                val expanded = search.isNotBlank() || group.key !in collapsed
+                item(key = "group:${group.key}") {
+                    Column(Modifier.fillMaxWidth().testTag("project-header:${group.key}")
+                        .semantics { stateDescription = if (expanded) "已展开" else "已折叠" }
+                        .clickable {
+                            collapsed = if (group.key in collapsed) collapsed - group.key else collapsed + group.key
+                        }.padding(horizontal = 4.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(if (expanded) "▾" else "▸", color = Mint, modifier = Modifier.padding(end = 8.dp))
+                            Text(group.name, Modifier.weight(1f), color = Mint, fontWeight = FontWeight.SemiBold,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${group.threads.size} 个会话", color = Color(0xFF91A799), fontSize = 11.sp)
+                        }
+                        if (group.path.isNotBlank()) Text(group.path, color = Color(0xFF91A799), fontSize = 11.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 20.dp))
+                    }
+                }
+                if (expanded) items(group.threads, key = { it.id }) { thread ->
+                    Surface(shape = MaterialTheme.shapes.medium, color = if (thread.id == state.selected) Color(0xFF283C30) else SurfaceColor,
+                        modifier = Modifier.fillMaxWidth().padding(start = 12.dp).clickable { onSelect(thread.id) }) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(thread.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                            Text(if (thread.active) "● 正在执行" else if (thread.id == state.selected) "当前会话" else "点击继续",
+                                color = Color(0xFF91A799), fontSize = 12.sp)
+                        }
                     }
                 }
             }
