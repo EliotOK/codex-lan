@@ -4,7 +4,7 @@
 
 ## 手机安装
 
-在手机浏览器打开本仓库的 [Releases](https://github.com/EliotOK/codex-lan/releases/latest)，下载 `codex-lan-android.apk` 并安装。需要 Android 8.0 或更新版本。私有仓库需先登录有访问权限的 GitHub 账户。
+在手机浏览器打开本仓库的 [Releases](https://github.com/EliotOK/codex-lan/releases/latest)，下载 `codex-lan-android.apk` 并安装。需要 Android 8.0 或更新版本。下载无需登录 GitHub。
 
 手机与电脑连接同一局域网，填写电脑连接面板显示的 HTTPS 地址和 8 位配对码。选择已有会话后即可继续聊天。语音识别结果放进消息框，确认后发送，Codex 返回文字；识别服务由手机系统提供。
 
