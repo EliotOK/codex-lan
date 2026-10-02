@@ -19,15 +19,17 @@ import java.util.UUID
 import javax.net.ssl.SSLException
 
 data class ThreadInfo(val id: String, val title: String, val project: String, val active: Boolean)
-data class ChatItem(val key: String, val role: String, val text: String, val detail: Boolean = false)
+data class ChatImage(val reference: String, val name: String = "图片")
+data class ChatItem(val key: String, val role: String, val text: String, val detail: Boolean = false, val images: List<ChatImage> = emptyList())
 data class PendingSend(val thread: String, val prompt: String, val request: String)
 data class ChatState(
     val endpoint: String = "https://192.168.1.220:8787", val paired: Boolean = false,
     val connected: Boolean = false, val connecting: Boolean = false, val threads: List<ThreadInfo> = emptyList(),
     val selected: String = "", val title: String = "选择会话", val items: List<ChatItem> = emptyList(),
     val draft: String = "", val sending: Boolean = false, val notice: String = "", val error: Boolean = false,
-    val active: Boolean = false, val cursor: String? = null, val loadingOlder: Boolean = false,
-    val pending: PendingSend? = null, val fingerprint: String = ""
+    val active: Boolean = false, val activityLabel: String = "就绪", val cursor: String? = null, val loadingOlder: Boolean = false,
+    val pending: PendingSend? = null, val fingerprint: String = "",
+    val usage: UsageInfo? = null, val usageNotice: String = "", val usageRefreshing:Boolean = false
 )
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
@@ -40,6 +42,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val refreshLock = Mutex()
     private var refreshCount = 0
     private var loadedOlder = false
+    private val usageLock = Mutex()
+    private var lastUsageCheck = 0L
+    private val imageLock = kotlinx.coroutines.sync.Semaphore(1)
+    private val previews = object: android.util.LruCache<String,android.graphics.Bitmap>(12*1024*1024){override fun sizeOf(key:String,value:android.graphics.Bitmap)=value.allocationByteCount}
     private val mutable = MutableStateFlow(ChatState())
     val state = mutable.asStateFlow()
     private fun change(transform: (ChatState) -> ChatState) { mutable.value = transform(mutable.value) }
@@ -78,8 +84,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         try {
             require(bytes.size <= 16384) { "证书文件过大" }
             LanClient.parseCertificate(bytes).checkValidity()
-            cert = bytes; client = null; savedCredentials = Credentials()
-            change { it.copy(paired = false, connected = false, fingerprint = LanClient.fingerprint(bytes), notice = "证书已更新，请重新配对。", error = false) }
+            cert = bytes; client = null; savedCredentials = Credentials(); previews.evictAll();lastUsageCheck=0L
+            change { it.copy(paired = false, connected = false, usage=null,usageNotice="",fingerprint = LanClient.fingerprint(bytes), notice = "证书已更新，请重新配对。", error = false) }
             persist()
         } catch (e: Exception) { report(e) }
     }
@@ -90,10 +96,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val next = LanClient(endpoint, cert)
                 withContext(Dispatchers.IO) { next.pair(code) }
-                client = next; savedCredentials = next.credentials
-                refreshCount = 0; turns.clear(); loadedOlder = false
+                client = next; savedCredentials = next.credentials; previews.evictAll()
+                refreshCount = 0; turns.clear(); loadedOlder = false;lastUsageCheck=0L
                 change { it.copy(endpoint = next.base, paired = true, connected = true, threads = emptyList(), items = emptyList(), cursor = null,
-                    notice = "已配对，同步桌面会话。", error = false) }
+                    usage=null,usageNotice="",notice = "已配对，同步桌面会话。", error = false) }
                 persist(); refresh()
             } catch (e: Exception) { report(e) }
             finally { change { it.copy(connecting = false) } }
@@ -134,6 +140,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } else withContext(Dispatchers.IO) { api.status() }
             if (api !== client) return@withLock false
             change { it.copy(connected = true, notice = if (!it.connected && it.error && it.pending == null) "连接已恢复" else it.notice, error = if (!it.connected && it.pending == null) false else it.error) }
+            refreshUsage()
             true
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: Exception) { if (client === api) report(e); false }
@@ -148,6 +155,38 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (refreshNow) viewModelScope.launch { refresh() }
     }
     fun pauseReads() { client?.cancelReads() }
+    fun refreshUsage(force:Boolean=false) {
+        val api=client?:return
+        if(usageLock.isLocked || (!force&&System.currentTimeMillis()-lastUsageCheck<60000))return
+        viewModelScope.launch { usageLock.withLock {
+            if(api!==client)return@withLock
+            lastUsageCheck=System.currentTimeMillis()
+            change{it.copy(usageRefreshing=true)}
+            try {
+                val usage=withContext(Dispatchers.IO){api.usage(force)}
+                if(api===client)change{it.copy(usage=usage,usageNotice="")}
+            } catch(e:kotlinx.coroutines.CancellationException){throw e}
+            catch(e:Exception){if(api===client)change{it.copy(usageNotice=if(e is ApiException&&e.status==404)"请更新电脑服务以读取用量。"else "用量暂不可用，可稍后刷新；已有数据可能过时。")}}
+            finally{change{it.copy(usageRefreshing=false)}}
+        } }
+    }
+    suspend fun imageBitmap(image: ChatImage, full: Boolean): android.graphics.Bitmap = withContext(Dispatchers.IO) {
+        val api=client?:throw java.io.IOException("请先连接电脑")
+        val key=api.base+":"+api.credentials.token+":"+image.reference
+        imageLock.acquire()
+        try{
+            if(!full)previews.get(key)?.let{return@withContext it}
+            val bytes=api.imageBytes(image)
+            val bounds=android.graphics.BitmapFactory.Options().apply{inJustDecodeBounds=true}
+            android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds)
+            require(bounds.outWidth>0&&bounds.outHeight>0){"此图片格式暂不支持"}
+            val options=android.graphics.BitmapFactory.Options().apply{inSampleSize=ImageSizing.sample(bounds.outWidth,bounds.outHeight,full)}
+            val bitmap=android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size,options)?:throw java.io.IOException("图片无法解码")
+            if(!full&&client===api)previews.put(key,bitmap)
+            bitmap
+        }catch(error:OutOfMemoryError){throw java.io.IOException("图片较大，手机内存不足，请在电脑查看")}
+        finally{imageLock.release()}
+    }
     fun reconnect(showMessage: Boolean = true) {
         if (!state.value.paired) return
         val old = client ?: return
@@ -175,6 +214,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val items = turns.values.sortedBy { it.optLong("startedAt") }.flatMap { t -> renderTurn(t) }
         if (!newest) loadedOlder = true
         change { it.copy(items = items, title = thread?.optString("title", it.title) ?: it.title,
+            activityLabel = if(newest) ActivityLabels.from(snapshot) else it.activityLabel,
             active = isActiveStatus(thread?.opt("status")), cursor = if (newest && loadedOlder) it.cursor else snapshot.optJSONObject("page")?.optString("nextCursor")?.takeIf { c -> c.isNotBlank() && c != "null" }) }
     }
     fun loadOlder() {
@@ -224,8 +264,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun disconnect() {
         if (state.value.sending) return
         val previous = client
-        client = null; savedCredentials = Credentials(); turns.clear()
-        change { it.copy(paired = false, connected = false, threads = emptyList(), items = emptyList(), notice = "已断开，请重新配对。", error = false) }
+        client = null; savedCredentials = Credentials(); turns.clear(); previews.evictAll();lastUsageCheck=0L
+        change { it.copy(paired = false, connected = false, usage=null,usageNotice="",threads = emptyList(), items = emptyList(), notice = "已断开，请重新配对。", error = false) }
         try { persist() } catch (e: Exception) { report(e) }
         viewModelScope.launch { try { withContext(Dispatchers.IO) { previous?.logout() } } catch (_: Exception) { } }
     }
@@ -262,9 +302,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     "userMessage" -> {
                         flushRecords()
                         val content = item.optJSONArray("content") ?: JSONArray()
-                        val text = (0 until content.length()).map { j -> val p = content.getJSONObject(j); when (p.optString("type")) { "text" -> p.optString("text"); "image" -> "[图片]"; else -> "[附件]" } }.joinToString("\n")
+                        val attachments = (0 until content.length()).mapNotNull { j -> val p=content.getJSONObject(j)
+                            val ref=p.optString("imageId").takeIf{it.matches(Regex("[a-f0-9]{64}"))}?.let{"/api/images/$it"}
+                                ?: (p.optString("url").ifBlank{p.optString("imageUrl")}).takeIf{it.startsWith("https://")}
+                            if(p.optString("type") in listOf("localImage","image","inputImage") && ref!=null)ChatImage(ref,p.optString("name","图片"))else null
+                        }
+                        val text = (0 until content.length()).map { j -> val p = content.getJSONObject(j); when (p.optString("type")) { "text" -> p.optString("text"); "image","localImage","inputImage" -> if(p.has("imageId")||p.optString("url").startsWith("https://"))"" else "[图片暂不可用]"; else -> "[附件]" } }.filter{it.isNotBlank()}.joinToString("\n")
                         val visible = MessageContent.user(text)
-                        result += ChatItem(key, "你", visible.text.ifBlank { "[附件]" })
+                        result += ChatItem(key, "你", visible.text.ifBlank { if(attachments.isEmpty())"[附件]"else "" }, images=attachments)
                         visible.context?.takeIf{it.isNotBlank()}?.let { result += ChatItem(key+":context", "会话上下文", it, true) }
                     }
                     "agentMessage" -> {

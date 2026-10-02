@@ -56,6 +56,7 @@ class LanClient(endpoint: String, certificate: ByteArray, initial: Credentials =
     }
     fun status() = execute("/api/status").first
     fun threads() = execute("/api/threads").first
+    fun usage(force:Boolean=false) = UsageInfo.parse(execute("/api/usage"+if(force)"?refresh=1"else "").first)
     fun read(id: String, cursor: String? = null): JSONObject {
         require(Regex("[a-fA-F0-9]{8}-(?:[a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}").matches(id)) { "会话编号无效" }
         val query = cursor?.let { "?cursor=" + java.net.URLEncoder.encode(it, "UTF-8") }.orEmpty()
@@ -67,6 +68,35 @@ class LanClient(endpoint: String, certificate: ByteArray, initial: Credentials =
         return execute("/api/threads/$id/messages", JSONObject().put("prompt", prompt).put("requestId", requestId)).first
     }
     fun logout() = execute("/api/logout", JSONObject()).first
+    fun imageBytes(image: ChatImage): ByteArray {
+        val local = image.reference.startsWith("/api/images/")
+        val request = Request.Builder()
+        val transport: OkHttpClient
+        if(local){
+            require(Regex("/api/images/[a-f0-9]{64}").matches(image.reference)){"图片地址无效"}
+            require(Regex("[a-f0-9]{64}").matches(credentials.token)){"请先配对电脑"}
+            request.url(base+image.reference).header("Cookie","codex_lan=${credentials.token}")
+            transport=reader
+        }else{
+            val uri=URI(image.reference)
+            require(uri.scheme=="https"&&uri.userInfo==null&&!uri.host.isNullOrBlank()){ "图片暂不支持此地址" }
+            request.url(image.reference);transport=publicImages
+        }
+        transport.newCall(request.build()).execute().use { response ->
+            if(!response.isSuccessful){
+                val message=if(local)try{JSONObject(response.body?.string().orEmpty()).optString("error","图片读取失败")}catch(_:Exception){"图片读取失败"}else "图片服务器返回 HTTP ${response.code}"
+                throw java.io.IOException(message)
+            }
+            val body=response.body?:throw java.io.IOException("图片内容为空")
+            require(body.contentLength()<=MAX_IMAGE_BYTES){"图片超过 20 MB，请在电脑查看"}
+            val output=java.io.ByteArrayOutputStream()
+            body.byteStream().use { input ->
+                val chunk=ByteArray(8192)
+                while(true){val size=input.read(chunk);if(size<0)break;require(output.size()+size<=MAX_IMAGE_BYTES){"图片超过 20 MB，请在电脑查看"};output.write(chunk,0,size)}
+            }
+            return output.toByteArray()
+        }
+    }
     private fun execute(path: String, body: JSONObject? = null, authenticated: Boolean = true): Pair<JSONObject, String?> {
         val current = credentials
         val request = Request.Builder().url(base + path).header("Accept", "application/json")
@@ -84,6 +114,9 @@ class LanClient(endpoint: String, certificate: ByteArray, initial: Credentials =
         }
     }
     companion object {
+        const val MAX_IMAGE_BYTES=20*1024*1024
+        private val publicImages=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).readTimeout(20,TimeUnit.SECONDS)
+            .callTimeout(30,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
         private val cleanup = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
             Thread(task,"lan-connection-cleanup").apply { isDaemon=true }
         }

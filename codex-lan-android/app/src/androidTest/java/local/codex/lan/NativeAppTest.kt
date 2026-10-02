@@ -7,6 +7,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.pinch
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.lifecycle.ViewModelProvider
@@ -30,6 +36,72 @@ import java.util.concurrent.atomic.AtomicReference
 @RunWith(AndroidJUnit4::class)
 class NativeAppTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    @Test fun previewsImagesNavigatesHistoryAndDisplaysIndependentQuota() {
+        val store=SecureStore(InstrumentationRegistry.getInstrumentation().targetContext);val original=store.read()
+        val cert=HeldCertificate.Builder().addSubjectAlternativeName("127.0.0.1").build()
+        val server=MockWebServer();server.useHttps(HandshakeCertificates.Builder().heldCertificate(cert).build().sslSocketFactory(),false)
+        val id="33333333-3333-4333-8333-333333333333";val image="d".repeat(64)
+        val png=java.io.ByteArrayOutputStream().also { output -> android.graphics.Bitmap.createBitmap(32,32,android.graphics.Bitmap.Config.ARGB_8888).apply{eraseColor(android.graphics.Color.GREEN)}.compress(android.graphics.Bitmap.CompressFormat.PNG,100,output) }.toByteArray()
+        val quotaOffline=AtomicBoolean(false);val appended=AtomicBoolean(false);val imageReads=AtomicInteger()
+        server.dispatcher=object:Dispatcher(){override fun dispatch(request:RecordedRequest):MockResponse {
+            val response=MockResponse().setHeader("Content-Type","application/json")
+            return when(request.path){
+                "/api/pair"->response.setHeader("Set-Cookie","codex_lan=${"c".repeat(64)}; Secure").setBody("{\"csrf\":\"test-csrf\"}")
+                "/api/threads"->response.setBody("{\"threads\":[{\"id\":\"$id\",\"title\":\"图片与导航验证\",\"status\":\"active\"}]}")
+                "/api/usage","/api/usage?refresh=1"->if(quotaOffline.get())response.setResponseCode(502).setBody("{\"error\":\"用量不可用\"}")else response.setBody("{\"fetchedAt\":2000000000000,\"limits\":[{\"name\":\"codex\",\"windows\":[{\"windowDurationMins\":300,\"remainingPercent\":75,\"resetsAt\":2000000100},{\"windowDurationMins\":10080,\"remainingPercent\":50,\"resetsAt\":2000000200}]}]}")
+                "/api/images/$image"->{assertEquals("codex_lan=${"c".repeat(64)}",request.getHeader("Cookie"));imageReads.incrementAndGet();response.setHeader("Content-Type","image/png").setBody(okio.Buffer().write(png))}
+                "/api/threads/$id"->{
+                    val turns=org.json.JSONArray()
+                    for(i in 0..5)turns.put(JSONObject().put("id","t$i").put("startedAt",i+1).put("status","completed").put("items",org.json.JSONArray().put(JSONObject().put("id","m$i").put("type","agentMessage").put("text","历史锚点$i\n\n"+"阅读段落\n\n".repeat(15)))))
+                    val last=org.json.JSONArray().put(JSONObject().put("id","attachment").put("type","userMessage").put("content",org.json.JSONArray().put(JSONObject().put("type","localImage").put("imageId",image).put("name","验证图片"))))
+                    last.put(JSONObject().put("id","reason").put("type","reasoning"))
+                    if(appended.get())last.put(JSONObject().put("id","new").put("type","agentMessage").put("text","新增回复"))
+                    turns.put(JSONObject().put("id","last").put("startedAt",10).put("status","inProgress").put("items",last))
+                    response.setBody(JSONObject().put("thread",JSONObject().put("id",id).put("title","图片与导航验证").put("status",JSONObject().put("type","active"))).put("turns",turns).put("page",JSONObject()).toString())
+                }
+                else->response.setBody("{}")
+            }
+        }}
+        server.start()
+        try {
+            val vm=ViewModelProvider(compose.activity)[ChatViewModel::class.java]
+            compose.runOnIdle{vm.setCertificate(cert.certificatePem().toByteArray());vm.pair("https://127.0.0.1:${server.port}","12345678")}
+            compose.waitUntil(30000){vm.state.value.usage!=null&&vm.state.value.items.any{it.images.isNotEmpty()}}
+            compose.onNodeWithText("思考中").assertIsDisplayed()
+            compose.onNodeWithText("用量").performClick()
+            compose.onNodeWithText("5 小时剩余 75%").assertIsDisplayed()
+            compose.onNodeWithText("7 天剩余 50%").assertIsDisplayed()
+            screenshot("usage")
+            quotaOffline.set(true);compose.onNodeWithText("刷新用量").performClick()
+            compose.waitUntil(15000){vm.state.value.usageNotice.isNotBlank()&&!vm.state.value.usageRefreshing}
+            assertTrue(vm.state.value.connected)
+            compose.onNodeWithText("关闭").performClick()
+            compose.onNodeWithText("↓ 最底部").performClick()
+            compose.waitUntil(20000){compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.TestTag,"image-preview")).fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithTag("image-preview").performClick()
+            compose.waitUntil(20000){imageReads.get()>=2}
+            compose.onNodeWithTag("image-viewer").performTouchInput{pinch(Offset(width*0.4f,height*0.5f),Offset(width*0.6f,height*0.5f),Offset(width*0.2f,height*0.5f),Offset(width*0.8f,height*0.5f))}
+            compose.waitUntil(10000){!compose.onNodeWithTag("image-zoom").fetchSemanticsNode().config[SemanticsProperties.Text].joinToString().contains("100%")}
+            compose.onNodeWithText("重置缩放").performClick()
+            compose.onNodeWithText("双指缩放 · 双击放大 · 100%").assertIsDisplayed()
+            screenshot("image")
+            compose.onNodeWithText("关闭图片").performClick()
+            compose.onNodeWithText("历史位置").performClick()
+            compose.onNodeWithText("搜索历史消息").performTextReplacement("历史锚点0")
+            compose.onNode(hasText("历史锚点0",substring=true) and !hasSetTextAction()).performClick()
+            compose.onNodeWithText("历史锚点0").assertIsDisplayed()
+            appended.set(true);compose.waitUntil(15000){vm.state.value.items.any{it.text=="新增回复"}}
+            compose.onNodeWithText("历史锚点0").assertIsDisplayed()
+            compose.onNodeWithText("↓ 最底部").performClick()
+            compose.onNodeWithText("新增回复").assertIsDisplayed()
+        }finally{server.shutdown();store.save(original)}
+    }
+    private fun screenshot(name:String){
+        val instrumentation=InstrumentationRegistry.getInstrumentation()
+        val bitmap=instrumentation.uiAutomation.takeScreenshot()?:return
+        java.io.File(instrumentation.targetContext.getExternalFilesDir(null),"qa-$name.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
+        bitmap.recycle()
+    }
     @Test fun rendersMarkdownRecoversConnectionAndSendsConfirmedVoiceText() {
         val store = SecureStore(InstrumentationRegistry.getInstrumentation().targetContext)
         val original = store.read()

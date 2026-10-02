@@ -121,7 +121,7 @@ export class DesktopBridge {
     return { connected: true, transport: 'desktop-native-pipe', approvals: false, tokenStreaming: false };
   }
   async call(tool, args) {
-    if (!['list_threads', 'read_thread', 'send_message_to_thread'].includes(tool)) throw new Error('不支持的操作');
+    if (!['list_threads', 'read_thread', 'send_message_to_thread', 'get_usage_limits'].includes(tool)) throw new Error('不支持的操作');
     if (!this.callerThreadId) throw new Error('缺少连接来源聊天 ID，请从连接设置填写');
     const result = await this.request('tools/call', {
       namespace: 'codex_app', tool, arguments: args, callerSource: 'codex',
@@ -132,6 +132,7 @@ export class DesktopBridge {
     try { return JSON.parse(text); } catch { return { text }; }
   }
   list() { return this.call('list_threads', { limit: 50 }); }
+  usage() { return this.call('get_usage_limits', {}); }
   read(threadId, cursor) {
     return this.call('read_thread', { threadId, hostId: 'local', turnLimit: 5, includeOutputs: true, maxOutputCharsPerItem: 20000, ...(cursor ? { cursor } : {}) });
   }

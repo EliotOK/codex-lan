@@ -6,6 +6,8 @@ import { networkInterfaces } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DesktopBridge } from './bridge.mjs';
+import { ImageRegistry } from './images.mjs';
+import { normalizeUsage } from './usage.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
@@ -25,6 +27,8 @@ async function readBody(request) {
 }
 export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000000)), lanAddresses=addresses(), port=8787, receiptPath, certificate, initialReceipts=[], initialSessions=[], saveSessions=async()=>{}, savePairingCode=async()=>{}, saveConnectionId=async()=>{} } = {}) {
   const sessions=new Map(initialSessions.filter(([hash,s])=>/^[a-f0-9]{64}$/.test(hash)&&s.expires>Date.now()&&typeof s.csrf==='string')), attempts=new Map(), allowedThreads=new Set(), cache=new Map();
+  const images=new ImageRegistry();
+  let usageCache, usageFlight;
   const hashToken=token=>createHash('sha256').update(token??'').digest('hex');
   let sessionFlight=Promise.resolve(), settingsFlight=Promise.resolve();
   const persistSessions=()=>{const snapshot=[...sessions];sessionFlight=sessionFlight.catch(()=>{}).then(()=>saveSessions(snapshot));return sessionFlight;};
@@ -98,7 +102,23 @@ export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000
         await settingsFlight;return json(response,200,{pairingCode,existingDevicesRemainPaired:true});
       }
       if(route==='/api/status'&&request.method==='GET')return json(response,200,await bridge.check());
+      if(route==='/api/usage'&&request.method==='GET'){
+        const age=usageCache?Date.now()-usageCache.fetchedAt:Infinity;
+        if(age>(url.searchParams.get('refresh')==='1'?5000:60000)){
+          if(!usageFlight)usageFlight=bridge.usage().then(normalizeUsage).then(value=>{usageCache=value;return value;}).finally(()=>{usageFlight=null});
+          await usageFlight;
+        }
+        return json(response,200,usageCache);
+      }
       if(route==='/api/threads'&&request.method==='GET')return json(response,200,await list());
+      const imageRoute=route.match(/^\/api\/images\/([a-f0-9]{64})$/);
+      if(imageRoute&&request.method==='GET'){
+        const entry=images.entries.get(imageRoute[1]);
+        if(!entry)return json(response,404,{error:'图片暂不可用，请刷新会话后重试'});
+        if(!allowedThreads.has(entry.threadId)){await list();if(!allowedThreads.has(entry.threadId))return json(response,404,{error:'此会话图片已不可用'});}
+        const {bytes,mime}=await images.read(imageRoute[1]);
+        response.writeHead(200,{'Content-Type':mime,'Content-Length':bytes.length,'Content-Disposition':'inline'});return response.end(bytes);
+      }
       if(route==='/api/connection'&&request.method==='POST') {
         if(!local(request))return json(response,403,{error:'连接来源仅能在电脑设置'});
         const body=await readBody(request);
@@ -115,7 +135,7 @@ export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000
           if(cursor&&cursor.length>4000)return json(response,400,{error:'分页信息过长'});
           let entry=cache.get(key);
           if(!entry||entry.until<Date.now()) {
-            entry={until:Date.now()+900,promise:bridge.read(id,cursor).catch(error=>{cache.delete(key);throw error;})};
+            entry={until:Date.now()+900,promise:bridge.read(id,cursor).then(data=>images.decorate(id,data)).catch(error=>{cache.delete(key);throw error;})};
             if(cache.size>100)cache.clear();cache.set(key,entry);
           }
           return json(response,200,await entry.promise);

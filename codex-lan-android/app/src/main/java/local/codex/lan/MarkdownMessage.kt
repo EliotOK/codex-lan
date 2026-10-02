@@ -39,32 +39,38 @@ private fun inline(node: Node): AnnotatedString = buildAnnotatedString {
                     withLink(LinkAnnotation.Url(n.destination, TextLinkStyles(style = SpanStyle(color = Color(0xFFAEF3CC), textDecoration = TextDecoration.Underline)))) { children(n).forEach(::visit) }
                 } else children(n).forEach(::visit)
             }
-            is Image -> { append("[图片："); children(n).forEach(::visit); append("]") }
+            is Image -> Unit
             else -> children(n).forEach(::visit)
         }
     }
     children(node).forEach(::visit)
 }
-@Composable fun MarkdownMessage(text: String) {
+@Composable fun MarkdownMessage(text: String, loader: suspend (ChatImage,Boolean)->android.graphics.Bitmap) {
     val document = remember(text) { markdownParser.parse(text) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { children(document).forEach { MarkdownBlock(it) } }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { children(document).forEach { MarkdownBlock(it,loader) } }
 }
-@Composable private fun MarkdownBlock(node: Node) {
+private fun images(node:Node):List<Image> = if(node is Image)listOf(node)else children(node).flatMap(::images)
+@Composable private fun InlineContent(node:Node,loader:suspend(ChatImage,Boolean)->android.graphics.Bitmap,fontSize:androidx.compose.ui.unit.TextUnit=14.sp,fontWeight:FontWeight=FontWeight.Normal) {
+    val text=inline(node)
+    if(text.text.isNotBlank())Text(text,fontSize=fontSize,lineHeight=23.sp,fontWeight=fontWeight)
+    images(node).forEach{image->ImagePreview(ChatImage(image.destination,inline(image).text.ifBlank{"图片"}),loader)}
+}
+@Composable private fun MarkdownBlock(node: Node,loader:suspend(ChatImage,Boolean)->android.graphics.Bitmap) {
     when(node) {
-        is Heading -> Text(inline(node), fontWeight = FontWeight.Bold, fontSize = when(node.level){1->23.sp;2->20.sp;else->17.sp}, lineHeight = 29.sp)
-        is org.commonmark.node.Paragraph -> Text(inline(node), fontSize = 14.sp, lineHeight = 23.sp)
+        is Heading -> InlineContent(node,loader,fontWeight = FontWeight.Bold, fontSize = when(node.level){1->23.sp;2->20.sp;else->17.sp})
+        is org.commonmark.node.Paragraph -> InlineContent(node,loader)
         is FencedCodeBlock -> CodeBlock(node.literal)
         is IndentedCodeBlock -> CodeBlock(node.literal)
         is BulletList, is OrderedList -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             var index = if (node is OrderedList) node.startNumber else 1
             children(node).forEach { item -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(if(node is OrderedList) "${index++}." else "•", modifier = Modifier.widthIn(min = 16.dp), fontSize = 14.sp)
-                Column(Modifier.weight(1f),verticalArrangement = Arrangement.spacedBy(6.dp)){children(item).forEach{MarkdownBlock(it)}}
+                Column(Modifier.weight(1f),verticalArrangement = Arrangement.spacedBy(6.dp)){children(item).forEach{MarkdownBlock(it,loader)}}
             } }
         }
         is BlockQuote -> Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.width(3.dp).fillMaxHeight().background(Color(0xFF668E74)))
-            Column(Modifier.weight(1f),verticalArrangement = Arrangement.spacedBy(8.dp)){children(node).forEach{MarkdownBlock(it)}}
+            Column(Modifier.weight(1f),verticalArrangement = Arrangement.spacedBy(8.dp)){children(node).forEach{MarkdownBlock(it,loader)}}
         }
         is ThematicBreak -> HorizontalDivider()
         is HtmlBlock -> Text(node.literal, fontSize = 14.sp, lineHeight = 23.sp)
@@ -75,7 +81,7 @@ private fun inline(node: Node): AnnotatedString = buildAnnotatedString {
                     modifier = Modifier.width(145.dp).background(if(row.parent is TableHead) Color(0xFF2B4032) else Color(0xFF16201A)).padding(10.dp)) }
             }; HorizontalDivider() }
         }
-        else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { children(node).forEach{MarkdownBlock(it)} }
+        else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { children(node).forEach{MarkdownBlock(it,loader)} }
     }
 }
 @Composable private fun CodeBlock(text: String) {

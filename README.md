@@ -1,6 +1,6 @@
 # Codex LAN
 
-原生 Android 客户端与 Windows 局域网连接服务，手机和 Codex Desktop 共享已有聊天。支持消息与进度同步、Markdown、语音转文字输入、草稿保存和断线恢复。
+原生 Android 客户端与 Windows 局域网连接服务，手机和 Codex Desktop 共享已有聊天。支持消息与进度同步、Markdown、语音转文字输入、图片预览与缩放、历史消息定位、一键回到底部、执行状态、剩余用量、草稿保存和断线恢复。
 
 ## 手机安装
 
@@ -23,10 +23,10 @@ cd codex-lan
 
 ## 源码与验证
 
-- [`codex-lan/`](codex-lan/README.md)：电脑服务、网页连接面板与八项服务器测试。
+- [`codex-lan/`](codex-lan/README.md)：电脑服务、网页连接面板与 14 项服务器测试。
 - [`codex-lan-android/`](codex-lan-android/README.md)：Kotlin / Compose 客户端与 Android 构建说明。
-- [`安卓验证记录`](codex-lan-android/VALIDATION.md)：0.2.0 的 11 项 JVM 测试、4 项 Android 15 设备测试及连接恢复验证。
+- [`安卓验证记录`](codex-lan-android/VALIDATION.md)：0.3.0 的 JVM、Android 15 设备测试及真实桌面读取验证。
 
 服务和守护任务读取已有记录，不主动发送消息或调用模型。前台约每 1.2 秒同步桌面快照；手机审批仍需在电脑完成。电脑关机、注销或休眠会中断连接。桌面桥接使用内部本地接口，Codex Desktop 更新可能影响兼容性。
 
-下载文件的 SHA-256 在 Release 的 `SHA256SUMS.txt` 中。发布包采用同一项目签名，可覆盖安装已有 0.1.0。
+下载文件的 SHA-256 在 Release 的 `SHA256SUMS.txt` 中。0.3.0 发布包采用同一项目签名，可覆盖安装已有 0.1.0 和 0.2.0。

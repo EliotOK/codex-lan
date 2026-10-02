@@ -194,6 +194,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun Conversation(state: ChatState, vm: ChatViewModel, modifier: Modifier, acknowledge: () -> Unit) {
     val context = LocalContext.current
     var voiceThread by rememberSaveable { mutableStateOf("") }
@@ -207,7 +208,11 @@ class MainActivity : ComponentActivity() {
     val list = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var follow by rememberSaveable(state.selected) { mutableStateOf(true) }
-    val nearBottom by remember { derivedStateOf { list.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= list.layoutInfo.totalItemsCount - 2 } ?: true } }
+    var showHistory by rememberSaveable { mutableStateOf(false) }
+    var showUsage by rememberSaveable { mutableStateOf(false) }
+    var historySearch by rememberSaveable(state.selected) { mutableStateOf("") }
+    var anchorKey by rememberSaveable(state.selected) { mutableStateOf("") }
+    val nearBottom by remember { derivedStateOf { !list.canScrollForward } }
     suspend fun latest() {
         if (state.items.isEmpty()) return
         list.scrollToItem(state.items.size)
@@ -221,13 +226,22 @@ class MainActivity : ComponentActivity() {
     }
     LaunchedEffect(list.isScrollInProgress) { if (!list.isScrollInProgress) follow = nearBottom }
     Column(modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically){
+            if(state.connected&&state.active)CircularProgressIndicator(Modifier.size(12.dp),strokeWidth=1.5.dp)
+            Text(if(!state.connected)"等待重连" else if(state.sending)"正在提交消息" else state.activityLabel,
+                Modifier.weight(1f).padding(start=8.dp),fontSize=11.sp,color=Mint)
+            TextButton(onClick={showHistory=true},enabled=state.items.isNotEmpty()){Text("历史位置")}
+            TextButton(onClick={showUsage=true;vm.refreshUsage()}){Text("用量")}
+        }
+        Text(state.usage?.summary?:if(state.usageRefreshing)"正在读取用量…"else "用量暂不可用 · 点击用量查看",
+            Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=4.dp),fontSize=10.sp,color=Color(0xFF91A799),maxLines=2)
         Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(state = list, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 item(key = "history") { if (state.cursor != null) TextButton(onClick = vm::loadOlder, enabled = !state.loadingOlder) { Text(if (state.loadingOlder) "正在读取…" else "查看更早消息") } }
-                items(state.items, key = { it.key }) { message -> MessageCard(message) }
+                items(state.items, key = { it.key }) { message -> MessageCard(message,vm) }
                 if (state.items.isEmpty()) item { Text(if (state.selected.isBlank()) "从会话列表选择聊天" else "正在同步桌面聊天…", color = Color(0xFF91A799), modifier = Modifier.padding(vertical = 32.dp)) }
             }
-            if (!nearBottom) FilledTonalButton(onClick = { follow = true; scope.launch { latest() } }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) { Text("↓ 最新") }
+            if(state.items.isNotEmpty())FilledTonalButton(onClick = { follow = true;anchorKey="";scope.launch { latest() } }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) { Text("↓ 最底部") }
         }
         if (state.pending != null) {
             Row(Modifier.fillMaxWidth().background(Color(0xFF352521)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -257,9 +271,32 @@ class MainActivity : ComponentActivity() {
         Text(if (state.active) "正在执行 · 消息提交到同一个桌面会话" else "前台自动同步 · 与电脑共享会话", color = Color(0xFF91A799), fontSize = 10.sp,
             modifier = Modifier.padding(start = 20.dp, bottom = 10.dp))
     }
+    if(showUsage)UsagePanel(state,{vm.refreshUsage(true)},{showUsage=false})
+    if(showHistory)ModalBottomSheet(onDismissRequest={showHistory=false}){
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal=16.dp)){
+            Text("跳到历史消息",fontWeight=FontWeight.Bold,fontSize=19.sp)
+            Text("点选消息，定位到原对话位置",fontSize=12.sp,color=Color(0xFF91A799),modifier=Modifier.padding(vertical=8.dp))
+            OutlinedTextField(historySearch,{historySearch=it},label={Text("搜索历史消息")},singleLine=true,modifier=Modifier.fillMaxWidth())
+            if(state.cursor!=null)TextButton(onClick=vm::loadOlder,enabled=!state.loadingOlder){Text(if(state.loadingOlder)"正在加载历史…"else "加载更早消息")}
+            LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(vertical=12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                items(state.items.filter{!it.detail&&it.role in listOf("你","Codex")&&(historySearch.isBlank()||it.text.contains(historySearch,ignoreCase=true))},key={it.key}){entry->
+                    Surface(color=if(anchorKey==entry.key)Color(0xFF283C30)else SurfaceColor,shape=MaterialTheme.shapes.small,
+                        modifier=Modifier.fillMaxWidth().clickable{
+                            val index=state.items.indexOfFirst{it.key==entry.key}
+                            if(index>=0){follow=false;anchorKey=entry.key;showHistory=false;scope.launch{list.scrollToItem(index+1)}}
+                        }){
+                        Column(Modifier.padding(12.dp)){
+                            Text(entry.role,fontSize=11.sp,color=Mint)
+                            Text(entry.text.ifBlank{entry.images.firstOrNull()?.name?:"图片"}.replace('\n',' ').take(160),maxLines=3,overflow=TextOverflow.Ellipsis,fontSize=13.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
-@Composable private fun MessageCard(item: ChatItem) {
+@Composable private fun MessageCard(item: ChatItem,vm:ChatViewModel) {
     var expanded by rememberSaveable(item.key) { mutableStateOf(false) }
     if (item.role == "状态") { Text(item.text, color = Color(0xFF72897A), fontSize = 11.sp); return }
     val user = item.role == "你"
@@ -270,7 +307,10 @@ class MainActivity : ComponentActivity() {
                 modifier = if (item.detail) Modifier.fillMaxWidth().clickable { expanded = !expanded } else Modifier)
             if (!item.detail || expanded) SelectionContainer {
                 if (item.detail) Text(item.text, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-                else MarkdownMessage(item.text)
+                else Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+                    MarkdownMessage(item.text,vm::imageBitmap)
+                    item.images.forEach{ImagePreview(it,vm::imageBitmap)}
+                }
             }
         }
     }
