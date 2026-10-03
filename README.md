@@ -12,6 +12,8 @@
 
 手机与电脑连接同一局域网，填写电脑连接面板显示的 HTTPS 地址和 8 位配对码。选择已有会话后即可继续聊天。语音识别结果放进消息框，确认后发送，Codex 返回文字；识别服务由手机系统提供。
 
+0.4.9 新增 Windows 一键安装与 Codex Light 插件。下载完整 Windows 包，解压后双击 BAT；自动安装运行环境、原生证书、连接来源、普通用户守护任务与插件。重复安装保留配对和附件。
+
 0.4.8 按最近交互时间排列会话：组内会话与“未分组”均按更新时间降序，分组按最近更新的会话排序。搜索保留项目的整体最近更新时间。新用户部署与手机配对见 [首次使用](codex-lan/GETTING-STARTED.md)。
 
 0.4.7 名称更新为 Codex Light，保持现有界面和外观设置。新增“会话互动”：在手机回答 Plan 与 MCP 表单提问，并可将 Desktop 的纯文字排队消息立即引导到当前运行轮次。需要电脑服务 0.4.7；附件、服务端队列和不支持的提问模式提供电脑处理入口。
@@ -24,23 +26,27 @@
 
 ## 电脑服务
 
-需要 Windows、Node.js 22 或更新版本和 OpenSSL，并在同一 Windows 用户下打开 Codex Desktop。
+使用 Windows 10 或更新版本（x64），同一用户登录并打开 Codex Desktop。从 [最新 Release](https://github.com/EliotOK/codex-lan/releases/latest) 下载 `codex-light-windows-x64.zip`，完整解压后双击 `install.bat`，允许专用网络的 Windows 防火墙提示。包内自带 Node，无需另装 OpenSSL。
+
+电脑连接面板：`http://127.0.0.1:8788/`，显示自己的 HTTPS 地址、配对码和状态。BAT 同时安装 **Codex Light 插件**，可在插件列表管理，在新聊天中让它更新、修复或查询连接服务。安装后重启 Codex 加载插件。
+
+也可从仓库来源安装插件：
 
 ```powershell
-cd codex-lan
-./install-keepalive.ps1
+codex plugin marketplace add EliotOK/codex-lan
+codex plugin add codex-light@codex-light
 ```
 
-电脑打开 `http://127.0.0.1:8788/` 查看地址与配对码，“连接设置”可修改并保存配对码。安装脚本注册当前用户的 Windows 任务计划程序任务，登录后自动启动，服务退出后约 3 秒恢复。停止服务并禁用自启动：`./stop.ps1`。
+登录自启动守护任务使用普通用户权限，服务退出后通常约 3 秒恢复。再次双击 BAT 可升级和修复，保留 `.runtime/`。停止服务并禁用自启动：`./stop.ps1`。源码运行需要 Node.js 22 或更新版本：`./install-keepalive.ps1`。
 
 发布 APK 内置公开电脑证书。换电脑或重新生成证书时，在安卓配对页导入该电脑的 `.runtime/cert.pem` 并核对指纹。电脑私钥、登录凭证、运行日志和 APK 签名密钥保留在本机。
 
 ## 源码与验证
 
-- [`codex-lan/`](codex-lan/README.md)：电脑服务、网页连接面板与 27 项服务器测试。
+- [`codex-lan/`](codex-lan/README.md)：电脑服务、网页连接面板与 29 项服务器测试。
 - [`codex-lan-android/`](codex-lan-android/README.md)：Kotlin / Compose 客户端与 Android 构建说明。
-- [`安卓验证记录`](codex-lan-android/VALIDATION.md)：0.4.8 的 40 项 JVM 和 12 项 Android 15 聊天设备测试，以及此前版本的更新与安装确认验证。
+- [`安卓验证记录`](codex-lan-android/VALIDATION.md)：0.4.9 的 40 项 JVM 和 12 项 Android 15 聊天设备测试，以及此前版本的更新与安装确认验证。
 
 服务和守护任务读取已有记录，不主动发送消息或调用模型。前台约每 1.2 秒同步桌面快照；手机审批仍需在电脑完成。电脑关机、注销或休眠会中断连接。桌面桥接使用内部本地接口，Codex Desktop 更新可能影响兼容性。
 
-下载文件的 SHA-256 在 Release 的 `SHA256SUMS.txt` 中。0.4.8 发布包采用同一项目签名，可覆盖安装已有版本。
+下载文件的 SHA-256 在 Release 的 `SHA256SUMS.txt` 中。0.4.9 发布包采用同一项目签名，可覆盖安装已有版本。

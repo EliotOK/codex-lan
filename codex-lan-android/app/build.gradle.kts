@@ -10,8 +10,8 @@ android {
         applicationId = "local.codex.lan"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.4.8"
+        versionCode = 13
+        versionName = "0.4.9"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }

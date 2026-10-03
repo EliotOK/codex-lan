@@ -1,0 +1,31 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {mkdtemp,readFile,writeFile,mkdir,rm} from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import {DatabaseSync} from 'node:sqlite';
+import {recentDesktopThreads,resolveConnectionId} from '../connection.mjs';
+import {configureConnection} from '../configure-connection.mjs';
+test('automatic connection chooses recent user Desktop chats from a read-only catalog',async t=>{
+ const directory=await mkdtemp(path.join(os.tmpdir(),'codex-catalog-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+ const database=new DatabaseSync(path.join(directory,'state_5.sqlite'));
+ database.exec('CREATE TABLE threads(id TEXT, source TEXT, archived INTEGER, thread_source TEXT, has_user_event INTEGER, updated_at INTEGER, recency_at_ms INTEGER)');
+ const add=database.prepare('INSERT INTO threads VALUES(?,?,?,?,?,?,?)');
+ const older=randomUUID(),newer=randomUUID(),desktopEvent=randomUUID();
+ add.run(older,'vscode',0,'user',1,100,100000);add.run(newer,'vscode',0,'user',1,200,200000);
+ add.run(randomUUID(),'vscode',1,'user',1,999,999000);add.run(randomUUID(),'vscode',0,'subagent',1,999,999000);add.run(randomUUID(),'exec',0,'user',1,999,999000);add.run(desktopEvent,'vscode',0,'user',0,999,999000);
+ database.close();const before=await readFile(path.join(directory,'state_5.sqlite'));
+ assert.deepEqual(await recentDesktopThreads(directory),[desktopEvent,newer,older]);assert.deepEqual(await readFile(path.join(directory,'state_5.sqlite')),before);
+ assert.equal(await resolveConnectionId({currentId:older,directory}),older);
+ assert.equal(await resolveConnectionId({currentId:older,threadId:newer,directory}),newer);
+ await assert.rejects(()=>resolveConnectionId({threadId:'invalid',directory}));
+});
+test('connection setup preserves credentials and existing settings and rejects damaged configuration',async t=>{
+ const root=await mkdtemp(path.join(os.tmpdir(),'codex-setup-'));t.after(()=>rm(root,{recursive:true,force:true}));await mkdir(path.join(root,'.runtime'));
+ const file=path.join(root,'.runtime','config.json'),old=randomUUID(),next=randomUUID();
+ await writeFile(file,JSON.stringify({callerThreadId:old,pairingCode:'87654321',customFlag:true}));
+ await configureConnection(root,{threadId:next});assert.deepEqual(JSON.parse(await readFile(file,'utf8')),{callerThreadId:next,pairingCode:'87654321',customFlag:true});
+ await configureConnection(root);assert.equal(JSON.parse(await readFile(file,'utf8')).callerThreadId,next);
+ await writeFile(file,'broken');await assert.rejects(()=>configureConnection(root));assert.equal(await readFile(file,'utf8'),'broken');
+});

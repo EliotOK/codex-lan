@@ -1,8 +1,13 @@
 {
   "name": "codex-lan",
-  "version": "0.4.7",
+  "version": "0.4.9",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
-  "scripts": { "start": "node server.mjs", "test": "node --test tests/*.test.mjs" }
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test tests/*.test.mjs"
+  }
 }

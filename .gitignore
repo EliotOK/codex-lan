@@ -12,3 +12,5 @@
 *.idsig
 .env
 .env.*
+
+**/runtime-bin/

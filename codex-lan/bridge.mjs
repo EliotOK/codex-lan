@@ -3,6 +3,7 @@ import { readdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { modelCatalog } from './models.mjs';
+import { resolveConnectionId } from './connection.mjs';
 
 const MAX_FRAME = 8 * 1024 * 1024;
 export function encodeFrame(message) {
@@ -139,7 +140,8 @@ export class DesktopBridge {
   }
   async call(tool, args) {
     if (!['list_threads', 'read_thread', 'send_message_to_thread', 'get_usage_limits', 'list_projects', 'navigate_to_codex_page'].includes(tool)) throw new Error('不支持的操作');
-    if (!this.callerThreadId) throw new Error('缺少连接来源聊天 ID，请从连接设置填写');
+    if (!this.callerThreadId) {this.callerThreadId=await resolveConnectionId();if(this.callerThreadId)await this.onCallerResolved?.(this.callerThreadId);}
+    if (!this.callerThreadId) throw new Error('请先在 Codex Desktop 打开一条已有聊天，再重试连接；也可使用 Codex Light 插件配置。');
     const result = await this.request('tools/call', {
       namespace: 'codex_app', tool, arguments: args, callerSource: 'codex',
       threadId: this.callerThreadId, turnId: `lan-${randomUUID()}`, callId: `lan-${randomUUID()}`,

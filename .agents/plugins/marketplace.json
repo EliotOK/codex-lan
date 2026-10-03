@@ -1,0 +1,20 @@
+{
+  "name": "codex-light",
+  "interface": {
+    "displayName": "Codex Light"
+  },
+  "plugins": [
+    {
+      "name": "codex-light",
+      "source": {
+        "source": "local",
+        "path": "./codex-lan/plugins/codex-light"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

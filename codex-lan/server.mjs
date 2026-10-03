@@ -255,6 +255,7 @@ async function main() {
   const atomicWrite=async(file,data)=>{const temp=file+'.tmp';await writeFile(temp,JSON.stringify(data,null,2),{mode:0o600});await rename(temp,file);};
   let configFlight=Promise.resolve();
   const updateConfig=patch=>{configFlight=configFlight.catch(()=>{}).then(async()=>{const next={...config,...patch};await atomicWrite(path.join(runtime,'config.json'),next);config=next;});return configFlight;};
+  bridge.onCallerResolved=callerThreadId=>updateConfig({callerThreadId});
   if(!/^[0-9]{8}$/.test(config.pairingCode??'')){
     let previous={};try{previous=JSON.parse(await readFile(path.join(runtime,'running.json'),'utf8'));}catch{}
     await updateConfig({pairingCode:/^[0-9]{8}$/.test(previous.pairingCode??'')?previous.pairingCode:String(randomInt(10000000,100000000))});

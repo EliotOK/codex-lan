@@ -1,12 +1,12 @@
 # Codex Light 电脑服务
 
-手机网页客户端，通过电脑上的连接服务接入 Codex Desktop 的原有聊天。桌面继续负责模型、工具和任务执行。
+原生 Android 与手机网页通过电脑连接服务接入 Codex Desktop 的原有聊天。桌面继续负责模型、工具和任务执行。
 
 新用户请先阅读 [首次使用](GETTING-STARTED.md)，完成自己的电脑服务、连接来源与手机证书配置。
 
 ## 运行
 
-需要 Windows、Node.js 22 或更新版本、OpenSSL，以及已打开的 Codex Desktop。
+完整 Windows 安装包：解压后双击 `install.bat`，自动安装电脑服务和 Codex Light 插件。包内自带 Node.js，无需另装 OpenSSL。源码安装需要 Node.js 22 或更新版本，以及已打开的 Codex Desktop。
 
 ```powershell
 ./install-keepalive.ps1
@@ -30,7 +30,7 @@
 
 再次运行 `./install-keepalive.ps1` 可恢复守护任务和登录自启动。
 
-不自动添加防火墙规则。若电脑可访问、手机不可访问，检查 Windows 是否允许此 Node 服务的 TCP 8787 私有网络入站连接，以及 Wi-Fi 是否启用了客户端隔离。连接仅用于局域网，不设置路由器端口转发。
+完整 Windows 安装器通过单独 Windows 权限提示配置防火墙：仅允许捆绑 Node 的 TCP 8787 专用网络、本地子网入站。源码启动脚本不添加规则。手机不可访问时检查防火墙和 Wi-Fi 客户端隔离。
 
 ## 功能与边界
 

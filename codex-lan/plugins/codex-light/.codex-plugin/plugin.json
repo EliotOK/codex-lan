@@ -1,0 +1,25 @@
+{
+  "name": "codex-light",
+  "version": "0.4.9",
+  "description": "Install, update and repair the Windows LAN service for Codex Light.",
+  "author": {
+    "name": "EliotOK",
+    "url": "https://github.com/EliotOK"
+  },
+  "homepage": "https://github.com/EliotOK/codex-lan",
+  "repository": "https://github.com/EliotOK/codex-lan",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Light",
+    "shortDescription": "安装、升级与修复 Windows 局域网连接服务",
+    "longDescription": "将 Android 手机连接到自己的 Codex Desktop，提供电脑服务安装、更新、修复和状态查询工作流。",
+    "developerName": "EliotOK",
+    "category": "Productivity",
+    "defaultPrompt": [
+      "使用 Codex Light 插件安装电脑端局域网连接服务",
+      "检查并修复 Codex Light 的连接",
+      "更新 Codex Light 电脑服务"
+    ],
+    "brandColor": "#4775EB"
+  }
+}

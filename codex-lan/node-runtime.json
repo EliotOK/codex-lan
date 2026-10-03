@@ -1,0 +1,7 @@
+{
+  "version": "24.21.0",
+  "architecture": "win-x64",
+  "sha256": "ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32",
+  "archiveSHA256": "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541",
+  "source": "https://nodejs.org/download/release/v24.21.0/node-v24.21.0-win-x64.zip"
+}

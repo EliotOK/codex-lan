@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Light 安装与修复"
+  short_description: "安装和维护 Windows 局域网连接服务，配置当前聊天并核对手机配对"
+  default_prompt: "使用 $codex-light-setup 安装或修复我的 Codex Light 电脑服务，连接当前已有聊天。"
