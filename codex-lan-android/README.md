@@ -4,7 +4,7 @@
 
 ## 安装和连接
 
-1. 在手机打开 [GitHub Release](https://github.com/EliotOK/codex-lan/releases/latest)，下载 `codex-lan-android.apk` 安装。需要 Android 8.0 或更新版本；按系统提示允许此次安装。0.4.7 可直接覆盖安装已有版本，此后可在 App 内更新。
+1. 在手机打开 [GitHub Release](https://github.com/EliotOK/codex-lan/releases/latest)，下载 `codex-lan-android.apk` 安装。需要 Android 8.0 或更新版本；按系统提示允许此次安装。0.4.8 可直接覆盖安装已有版本，此后可在 App 内更新。
 2. 电脑运行配套 `codex-lan/install-keepalive.ps1`，在电脑浏览器打开 `http://127.0.0.1:8788/`，查看当前地址和 8 位配对码。本次交付已在当前电脑启用守护任务。
 3. 手机和电脑连接同一局域网。应用内填写电脑面板显示的 HTTPS 地址和配对码，点击“连接电脑”。本次交付默认地址为 `https://192.168.1.220:8787`。
 4. 点击左上角返回箭头选择已有聊天。手机发送的文字会提交到该桌面会话；正在执行时也可提交后续消息。
@@ -19,6 +19,12 @@ openssl x509 -in ..\codex-lan-certificate.pem -noout -fingerprint -sha256
 
 如连接失败，确认电脑服务仍运行、地址未变化、Wi-Fi 没有客户端隔离，并检查 Windows 防火墙是否允许服务使用的 Node 程序在专用网络接收 TCP 8787。连接地址必须与证书的 IP SAN 匹配。
 
+
+## 0.4.8 会话排序
+
+会话列表按 Desktop 返回的更新时间排序。每个项目内及“未分组”内最近交互的会话排在前面；分组按其中最近更新的会话排序，“未分组”也参与排序。缺少更新时间或时间相同的会话保留原顺序。搜索不会改变项目的整体最近更新时间。发送成功后刷新会话列表。
+
+新用户安装流程见 [首次使用](../codex-lan/GETTING-STARTED.md)。每台电脑生成独立证书与配对码，手机需导入自己的电脑证书并填写自己的地址。
 
 ## 0.4.7 会话互动
 

@@ -1,8 +1,6 @@
 package local.codex.lan
 
-import java.util.Locale
-
-data class ProjectGroup(val key: String, val name: String, val path: String, val threads: List<ThreadInfo>)
+data class ProjectGroup(val key: String, val name: String, val path: String, val threads: List<ThreadInfo>, val updatedAt: Long = 0)
 
 object ProjectGroups {
     fun path(raw: String): String {
@@ -29,7 +27,7 @@ object ProjectGroups {
             val project = id?.let { lookup[it] }
             ThreadInfo(row.getString("id"), row.optString("title", "未命名会话"),
                 if (id == null) "" else project?.optString("label")?.takeIf { it.isNotBlank() } ?: "项目（名称暂不可用）",
-                ChatViewModel.isActiveStatus(row.opt("status")), project?.optString("path")?.let(::path).orEmpty(), id, path(row.optString("cwd")))
+                ChatViewModel.isActiveStatus(row.opt("status")), project?.optString("path")?.let(::path).orEmpty(), id, path(row.optString("cwd")), row.optLong("updatedAt").coerceAtLeast(0))
         }.distinctBy { it.id }
     }
     fun from(threads: List<ThreadInfo>, search: String = ""): List<ProjectGroup> {
@@ -39,10 +37,10 @@ object ProjectGroups {
             val first = members.first()
             val path = if (key == "unassigned") "" else path(first.projectPath)
             val name = if (key == "unassigned") "未分组" else first.project.ifBlank { "项目（名称暂不可用）" }
-            val matching = if (query.isEmpty() || name.contains(query, true) || path.contains(pathQuery, true)) members
-                else members.filter { it.title.contains(query, true) || ProjectGroups.path(it.cwd).contains(pathQuery, true) }
-            if (matching.isEmpty()) null else ProjectGroup(key, name, path, matching)
-        }.sortedWith(compareBy<ProjectGroup> { it.key == "unassigned" }
-            .thenBy { it.name.lowercase(Locale.ROOT) }.thenBy { it.path })
+            val ordered = members.sortedByDescending { it.updatedAt }
+            val matching = if (query.isEmpty() || name.contains(query, true) || path.contains(pathQuery, true)) ordered
+                else ordered.filter { it.title.contains(query, true) || ProjectGroups.path(it.cwd).contains(pathQuery, true) }
+            if (matching.isEmpty()) null else ProjectGroup(key, name, path, matching, ordered.first().updatedAt)
+        }.sortedByDescending { it.updatedAt }
     }
 }

@@ -18,7 +18,7 @@ import org.json.JSONObject
 import java.util.UUID
 import javax.net.ssl.SSLException
 
-data class ThreadInfo(val id: String, val title: String, val project: String, val active: Boolean, val projectPath: String = "", val projectId: String? = null, val cwd: String = "")
+data class ThreadInfo(val id: String, val title: String, val project: String, val active: Boolean, val projectPath: String = "", val projectId: String? = null, val cwd: String = "", val updatedAt: Long = 0)
 data class ChatImage(val reference: String, val name: String = "图片")
 data class ChatItem(val key: String, val role: String, val text: String, val detail: Boolean = false, val images: List<ChatImage> = emptyList(), val delivery: String? = null, val occurredAt: Long = 0, val files: List<UploadedFile> = emptyList(), val records: List<WorkRecord> = emptyList())
 data class PendingSend(val thread: String, val prompt: String, val request: String, val choice: ModelChoice = ModelChoice(), val attachments: List<UploadedFile> = emptyList())
@@ -381,7 +381,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 attachmentDrafts.remove(messageScope()+":"+pending.thread)
                 change { it.copy(pending = null, attachments = if(it.selected==pending.thread)emptyList()else it.attachments, draft = if (it.selected == pending.thread) "" else it.draft, notice = "已提交到桌面会话", error = false) }
                 showMessages()
-                persist(); refresh()
+                persist(); refreshCount = 0; refresh()
             } catch (e: Exception) {
                 if (e is ApiException && e.status in listOf(400, 401, 403, 404, 429) && e.receiptState == null) {
                     outgoing.remove(pending.request)

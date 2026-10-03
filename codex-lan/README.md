@@ -2,6 +2,8 @@
 
 手机网页客户端，通过电脑上的连接服务接入 Codex Desktop 的原有聊天。桌面继续负责模型、工具和任务执行。
 
+新用户请先阅读 [首次使用](GETTING-STARTED.md)，完成自己的电脑服务、连接来源与手机证书配置。
+
 ## 运行
 
 需要 Windows、Node.js 22 或更新版本、OpenSSL，以及已打开的 Codex Desktop。

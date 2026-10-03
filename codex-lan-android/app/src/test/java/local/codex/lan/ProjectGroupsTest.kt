@@ -6,6 +6,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ProjectGroupsTest {
+    @Test fun projectsAndUnassignedChatsUseLatestInteractionAndSearchKeepsProjectRecency() {
+        val payload = JSONObject("""{"threads":[
+            {"id":"pinned-old","projectId":"p1","title":"目标旧会话","updatedAt":100},
+            {"id":"unassigned-old","updatedAt":200},
+            {"id":"project-new","projectId":"p1","updatedAt":500},
+            {"id":"other-project","projectId":"p2","title":"目标另一个会话","updatedAt":400},
+            {"id":"unassigned-new","title":"目标最新会话","updatedAt":600},
+            {"id":"missing-time"}
+        ]}""")
+        val threads=ProjectGroups.parseThreads(payload)
+        assertEquals(100L,threads.first().updatedAt)
+        val groups=ProjectGroups.from(threads)
+        assertEquals(listOf("unassigned","project:p1","project:p2"),groups.map { it.key })
+        assertEquals(listOf("unassigned-new","unassigned-old","missing-time"),groups.first().threads.map { it.id })
+        assertEquals(listOf("project-new","pinned-old"),groups[1].threads.map { it.id })
+        assertEquals(listOf("unassigned","project:p1","project:p2"),ProjectGroups.from(threads,"目标").map { it.key })
+        assertEquals(listOf("first","second"),ProjectGroups.from(listOf(thread("first","a"),thread("second","b"))).single().threads.map { it.id })
+    }
     private fun thread(id: String, title: String, projectId: String? = null, project: String = "", cwd: String = "", path: String = "") =
         ThreadInfo(id, title, project, false, path, projectId, cwd)
     @Test fun unassignedChatsRemainTogetherDespiteDifferentWorkingDirectories() {
