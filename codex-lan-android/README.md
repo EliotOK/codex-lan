@@ -1,10 +1,10 @@
-# Codex LAN Android
+# Codex Light Android
 
 原生 Kotlin / Jetpack Compose 客户端，通过局域网连接配套的 Windows Codex LAN 服务。电脑与手机读写同一个已有 Codex Desktop 聊天。
 
 ## 安装和连接
 
-1. 在手机打开 [GitHub Release](https://github.com/EliotOK/codex-lan/releases/latest)，下载 `codex-lan-android.apk` 安装。需要 Android 8.0 或更新版本；按系统提示允许此次安装。0.4.6 可直接覆盖安装已有版本，此后可在 App 内更新。
+1. 在手机打开 [GitHub Release](https://github.com/EliotOK/codex-lan/releases/latest)，下载 `codex-lan-android.apk` 安装。需要 Android 8.0 或更新版本；按系统提示允许此次安装。0.4.7 可直接覆盖安装已有版本，此后可在 App 内更新。
 2. 电脑运行配套 `codex-lan/install-keepalive.ps1`，在电脑浏览器打开 `http://127.0.0.1:8788/`，查看当前地址和 8 位配对码。本次交付已在当前电脑启用守护任务。
 3. 手机和电脑连接同一局域网。应用内填写电脑面板显示的 HTTPS 地址和配对码，点击“连接电脑”。本次交付默认地址为 `https://192.168.1.220:8787`。
 4. 点击左上角返回箭头选择已有聊天。手机发送的文字会提交到该桌面会话；正在执行时也可提交后续消息。
@@ -18,6 +18,17 @@ openssl x509 -in ..\codex-lan-certificate.pem -noout -fingerprint -sha256
 ```
 
 如连接失败，确认电脑服务仍运行、地址未变化、Wi-Fi 没有客户端隔离，并检查 Windows 防火墙是否允许服务使用的 Node 程序在专用网络接收 TCP 8787。连接地址必须与证书的 IP SAN 匹配。
+
+
+## 0.4.7 会话互动
+
+应用名称为 Codex Light，包名与发布签名保持兼容，支持覆盖安装。有待回答问题或排队消息时，聊天页显示“会话互动”入口。Plan 的 `request_user_input` 与 MCP 表单提问使用 Desktop 原始请求编号提交，保留数字与字符串 ID 的区别；支持选择、文字、布尔、数字及枚举多选。MCP 可拒绝回答或取消提问，URL 等不支持的模式提供电脑处理入口。需要电脑服务 0.4.7。
+
+“立即引导”读取 Desktop 已保存的排队消息，在正在运行的轮次提交原文字与原消息 ID，收到成功结果后通过 Desktop 移除原排队项。当前支持纯文字本地队列；附件、服务端队列和 Desktop 禁止立即发送的消息需在电脑处理。重复请求使用相同操作编号，提交结果不确定时应先刷新核对。
+
+服务在 Desktop 重启后重新发现仍存活的本地端点，启动日志不可用时以只读能力检查识别接口。活跃的配对连接每小时续期，闲置十二小时后需重新配对。服务重启保留有效的配对凭证、草稿和附件。
+
+外网连接方案见 [REMOTE-ACCESS.md](../codex-lan/REMOTE-ACCESS.md)，推荐应用内中继与端到端加密；本版本没有部署外网连接。
 
 ## 功能与通信
 

@@ -69,6 +69,9 @@ class LanClient(endpoint: String, certificate: ByteArray, initial: Credentials =
         return execute("/api/threads/$id/messages", choice.json().put("prompt", prompt).put("requestId", requestId).also { if(attachments.isNotEmpty())it.put("attachments",org.json.JSONArray(attachments.map { file -> file.id })) }).first
     }
     fun permissions(id: String) = execute("/api/threads/$id/permissions").first
+    fun controls(id: String) = execute("/api/threads/$id/controls").first
+    fun answer(id: String, questionId: Any, response: JSONObject, actionId: String) = execute("/api/threads/$id/answer",JSONObject().put("questionId",questionId).put("response",response).put("actionId",actionId)).first
+    fun steer(id: String, messageId: String, actionId: String) = execute("/api/threads/$id/steer",JSONObject().put("messageId",messageId).put("actionId",actionId)).first
     fun openDesktop(id: String) = execute("/api/threads/$id/open-desktop", JSONObject()).first
     fun upload(id: String, requestId: String, name: String, bytes: ByteArray): UploadedFile {
         require(bytes.isNotEmpty() && bytes.size<=MAX_IMAGE_BYTES) { "单个文件需在 1 字节至 20 MB 之间" }

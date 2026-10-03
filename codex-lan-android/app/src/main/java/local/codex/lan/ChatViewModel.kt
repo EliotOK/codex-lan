@@ -31,7 +31,8 @@ data class ChatState(
     val pending: PendingSend? = null, val fingerprint: String = "",
     val usage: UsageInfo? = null, val usageNotice: String = "", val usageRefreshing:Boolean = false, val projectNotice: String = "",
     val attachments: List<UploadedFile> = emptyList(), val uploading: Boolean = false, val permissionNotice: String = "权限由 Desktop 管理",
-    val models: List<ModelOption> = emptyList(), val modelChoice: ModelChoice = ModelChoice(), val modelNotice: String = ""
+    val models: List<ModelOption> = emptyList(), val modelChoice: ModelChoice = ModelChoice(), val modelNotice: String = "",
+    val questions: List<QuestionCard> = emptyList(), val queued: List<QueuedMessage> = emptyList(), val controlsNotice: String = "", val answering: Boolean = false
 )
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
@@ -51,6 +52,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun desktopItems() = turns.values.sortedBy { it.optLong("startedAt") }.flatMap { renderTurn(it) }
     private fun showMessages() { change { it.copy(items = outgoing.merge(messageScope(), it.selected, desktopItems())) } }
     private val refreshLock = Mutex()
+    private val controlsLock = Mutex()
+    private val controlActions=linkedMapOf<String,String>()
     private var refreshCount = 0
     private var loadedOlder = false
     private val usageLock = Mutex()
@@ -106,7 +109,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             LanClient.parseCertificate(bytes).checkValidity()
             cert = bytes; client = null; savedCredentials = Credentials(); previews.evictAll();lastUsageCheck=0L;lastModelsCheck=0L
             turns.clear()
-            change { it.copy(paired = false, connected = false, usage=null,usageNotice="",models=emptyList(),modelChoice=ModelChoice(),modelNotice="",attachments=emptyList(),fingerprint = LanClient.fingerprint(bytes), notice = "证书已更新，请重新配对。", error = false) }
+            change { it.copy(paired = false, connected = false, usage=null,usageNotice="",models=emptyList(),modelChoice=ModelChoice(),modelNotice="",attachments=emptyList(),questions=emptyList(),queued=emptyList(),controlsNotice="",fingerprint = LanClient.fingerprint(bytes), notice = "证书已更新，请重新配对。", error = false) }
             showMessages()
             persist()
         } catch (e: Exception) { report(e) }
@@ -120,7 +123,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) { next.pair(code) }
                 client = next; savedCredentials = next.credentials; previews.evictAll()
                 refreshCount = 0; turns.clear(); loadedOlder = false;lastUsageCheck=0L;lastModelsCheck=0L
-                change { it.copy(endpoint = next.base, paired = true, connected = true, threads = emptyList(), items = emptyList(), cursor = null,
+                change { it.copy(endpoint = next.base, paired = true, connected = true, threads = emptyList(), items = emptyList(), cursor = null,questions=emptyList(),queued=emptyList(),controlsNotice="",
                     usage=null,usageNotice="",models=emptyList(),modelChoice=modelChoices[choiceKey()] ?: ModelChoice(),modelNotice="",notice = "已配对，同步桌面会话。", error = false) }
                 change { it.copy(modelChoice=modelChoices[choiceKey()] ?: ModelChoice(),attachments=attachmentDrafts[choiceKey()].orEmpty()) }
                 showMessages()
@@ -165,6 +168,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             change { it.copy(connected = true, notice = if (!it.connected && it.error && it.pending == null) "连接已恢复" else it.notice, error = if (!it.connected && it.pending == null) false else it.error) }
             refreshUsage()
             refreshModels()
+            refreshControls()
             true
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: Exception) { if (client === api) report(e); false }
@@ -174,12 +178,36 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val thread = state.value.threads.find { it.id == id } ?: return
         turns.clear()
         loadedOlder = false
-        change { it.copy(selected = id, title = thread.title, items = emptyList(), cursor = null, active = thread.active, draft = drafts[id].orEmpty(), modelChoice=modelChoices[choiceKey(id)] ?: ModelChoice(),attachments=attachmentDrafts[choiceKey(id)].orEmpty()) }
+        change { it.copy(selected = id, title = thread.title, items = emptyList(), cursor = null, active = thread.active, draft = drafts[id].orEmpty(), modelChoice=modelChoices[choiceKey(id)] ?: ModelChoice(),attachments=attachmentDrafts[choiceKey(id)].orEmpty(),questions=emptyList(),queued=emptyList(),controlsNotice="") }
         showMessages()
         try { persist() } catch (e: Exception) { report(e) }
         if (refreshNow) viewModelScope.launch { refresh() }
     }
     fun pauseReads() { client?.cancelReads() }
+    fun refreshControls() {
+        val api=client?:return;val id=state.value.selected
+        if(id.isBlank()||controlsLock.isLocked)return
+        viewModelScope.launch {controlsLock.withLock {
+            try {val data=withContext(Dispatchers.IO){api.controls(id)}
+                if(api===client&&id==state.value.selected)change{it.copy(questions=QuestionCard.list(data.optJSONArray("questions")),queued=QueuedMessage.list(data.optJSONArray("queued")),controlsNotice=data.optString("message"))}
+            }catch(e:kotlinx.coroutines.CancellationException){throw e}
+            catch(e:Exception){if(api===client&&id==state.value.selected)change{it.copy(questions=emptyList(),queued=emptyList(),controlsNotice=if(e is ApiException&&e.status==404)"请更新电脑服务以回答提问和立即引导。"else "互动状态暂不可用，请稍后刷新。")}}
+        }}
+    }
+    fun answer(card:QuestionCard,response:JSONObject) = submitControl("answer:${card.key}:${response}") {api,id,action -> api.answer(id,card.id,response,action)}
+    fun steer(message:QueuedMessage) = submitControl("steer:${message.id}") {api,id,action -> api.steer(id,message.id,action)}
+    private fun submitControl(key:String,send:(LanClient,String,String)->JSONObject) {
+        val api=client?:return;val id=state.value.selected;if(state.value.answering||id.isBlank())return
+        change{it.copy(answering=true)}
+        val scopedKey=choiceKey(id)+":"+key
+        val action=controlActions.getOrPut(scopedKey){UUID.randomUUID().toString()}
+        if(controlActions.size>100)controlActions.remove(controlActions.keys.first())
+        viewModelScope.launch {
+            try{withContext(Dispatchers.IO){send(api,id,action)};if(api===client&&id==state.value.selected)showNotice("已提交到当前桌面会话，正在同步结果。")}
+            catch(e:Exception){if(api===client&&id==state.value.selected)showNotice((e.message?:"提交失败")+"。请刷新核对后再操作。",true)}
+            finally{change{it.copy(answering=false)};refreshControls()}
+        }
+    }
     fun refreshUsage(force:Boolean=false) {
         val api=client?:return
         if(usageLock.isLocked || (!force&&System.currentTimeMillis()-lastUsageCheck<60000))return
@@ -376,7 +404,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (state.value.sending) return
         val previous = client
         client = null; savedCredentials = Credentials(); turns.clear(); previews.evictAll();lastUsageCheck=0L;lastModelsCheck=0L
-        change { it.copy(paired = false, connected = false, usage=null,usageNotice="",models=emptyList(),modelChoice=ModelChoice(),modelNotice="",attachments=emptyList(),threads = emptyList(), items = emptyList(), notice = "已断开，请重新配对。", error = false) }
+        change { it.copy(paired = false, connected = false, usage=null,usageNotice="",models=emptyList(),modelChoice=ModelChoice(),modelNotice="",attachments=emptyList(),questions=emptyList(),queued=emptyList(),controlsNotice="",threads = emptyList(), items = emptyList(), notice = "已断开，请重新配对。", error = false) }
         try { persist() } catch (e: Exception) { report(e) }
         viewModelScope.launch { try { withContext(Dispatchers.IO) { previous?.logout() } } catch (_: Exception) { } }
     }
@@ -384,10 +412,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (error is kotlinx.coroutines.CancellationException) throw error
         if (error is ApiException && error.status == 401) {
             client = null; savedCredentials = Credentials()
-            change { it.copy(paired = false) }
+            change { it.copy(paired = false,questions=emptyList(),queued=emptyList(),controlsNotice="") }
             try { persist() } catch (_: Exception) { }
         }
-        val text = if (error is SSLException) "证书验证失败。请检查电脑地址及证书指纹，需要时导入新的电脑证书。"
+        val text = if (error is ApiException && error.status == 401) "配对已过期，请输入配对码重新连接。"
+            else if (error is SSLException) "证书验证失败。请检查电脑地址及证书指纹，需要时导入新的电脑证书。"
             else if(error is java.io.IOException) "暂时无法连接电脑，将自动重试。请确认同一 Wi-Fi，或点击右上角重新连接。"
             else error.message ?: "连接失败，请检查电脑服务和同一 Wi-Fi。"
         change { it.copy(connected = if (error is ApiException && error.status in listOf(400, 403, 404, 429)) it.connected else false,

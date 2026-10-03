@@ -24,17 +24,19 @@ export class DesktopBridge {
   async discover() {
     if (this.pipePath) return this.pipePath;
     if (this.autoPipePath) return this.autoPipePath;
+    const livePipes=process.platform==='win32'?await readdir('\\\\.\\pipe\\').catch(()=>null):null;
     // The desktop emits its endpoint at startup. Inspect recent endpoint records only.
     const files = [];
     const walk = async (directory, depth) => {
-      for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      let entries;try{entries=await readdir(directory,{withFileTypes:true});}catch(error){if(directory===this.logRoot&&!livePipes)throw new Error(`无法读取 Desktop 日志目录（${error.code}），请检查守护任务用户权限`);return;}
+      for (const entry of entries) {
         const full = path.join(directory, entry.name);
         if (entry.isDirectory() && depth > 0) await walk(full, depth - 1);
         else if (entry.isFile() && entry.name.endsWith('.log')) {const h=await open(full,'r').catch(()=>null);if(h){try{files.push({full,mtime:(await h.stat()).mtimeMs});}finally{await h.close();}}}
       }
     };
     await walk(this.logRoot, 4);
-    for (const file of files.sort((a,b)=>b.mtime-a.mtime).slice(0, 24)) {
+    for (const file of files.sort((a,b)=>b.mtime-a.mtime).slice(0, 96)) {
       const handle = await open(file.full, 'r').catch(()=>null);
       if(!handle)continue;
       try {
@@ -44,11 +46,25 @@ export class DesktopBridge {
         let text=bytes.toString('utf8');
         if(size>bytes.length){await handle.read(bytes,0,bytes.length,size-bytes.length);text+='\n'+bytes.toString('utf8');}
         const hits = [...text.matchAll(/dynamic_app_tools_listening[^\r\n]*pipePath=(\\\\\.\\pipe\\[^\s\r\n]+)/g)];
-        if (hits.length) return hits.at(-1)[1];
+        for(const hit of hits.reverse())if(!livePipes||livePipes.includes(hit[1].slice('\\\\.\\pipe\\'.length)))return hit[1];
       } finally { await handle.close(); }
+    }
+    // Rotated or inaccessible startup logs can omit the endpoint. Identify the
+    // app-tools pipe with a read-only capability request before using it.
+    for(const name of (livePipes??[]).filter(name=>/^codex-browser-use-[a-f0-9-]+$/i.test(name)).slice(0,12)){
+      const endpoint='\\\\.\\pipe\\'+name;
+      if(await this.isAppToolsPipe(endpoint))return endpoint;
     }
     throw new Error('未找到桌面连接。请打开 Codex Desktop 后重试。');
   }
+  isAppToolsPipe(endpoint){return new Promise(resolve=>{
+    const socket=net.createConnection(endpoint);let bytes=Buffer.alloc(0),settled=false;
+    const finish=value=>{if(settled)return;settled=true;clearTimeout(timer);socket.destroy();resolve(value);};
+    const timer=setTimeout(()=>finish(false),1500);
+    socket.on('error',()=>finish(false));socket.on('close',()=>finish(false));
+    socket.on('connect',()=>socket.write(encodeFrame({id:0,jsonrpc:'2.0',method:'tools/list',params:{threadStartKind:'all'}})));
+    socket.on('data',chunk=>{bytes=Buffer.concat([bytes,chunk]);if(bytes.length<4)return;const size=bytes.readUInt32LE(0);if(size>MAX_FRAME)return finish(false);if(bytes.length<size+4)return;try{const response=JSON.parse(bytes.subarray(4,size+4));finish(response.result?.tools?.some(tool=>tool.namespace==='codex_app'&&tool.name==='list_threads')===true);}catch{finish(false);}});
+  });}
   async connect() {
     if (this.socket && !this.socket.destroyed) return;
     if (this.connecting) return this.connecting;

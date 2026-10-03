@@ -11,6 +11,8 @@ import { normalizeUsage } from './usage.mjs';
 import { localProjects } from './projects.mjs';
 import { UploadStore, MAX_UPLOAD } from './uploads.mjs';
 import { selectedModel } from './models.mjs';
+import { DesktopFollower } from './follower.mjs';
+import { questionCards, validateAnswer } from './questions.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
@@ -33,7 +35,7 @@ async function readBody(request) {
   try { return JSON.parse(Buffer.concat(parts).toString('utf8')); }
   catch { throw Object.assign(new Error('请求格式错误'),{status:400}); }
 }
-export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000000)), lanAddresses=addresses(), port=8787, receiptPath, uploadRoot, certificate, initialReceipts=[], initialSessions=[], saveSessions=async()=>{}, savePairingCode=async()=>{}, saveConnectionId=async()=>{} } = {}) {
+export function createApp({ bridge, follower=new DesktopFollower(), pairingCode=String(randomInt(10000000,100000000)), lanAddresses=addresses(), port=8787, receiptPath, uploadRoot, certificate, initialReceipts=[], initialSessions=[], saveSessions=async()=>{}, savePairingCode=async()=>{}, saveConnectionId=async()=>{} } = {}) {
   const sessions=new Map(initialSessions.filter(([hash,s])=>/^[a-f0-9]{64}$/.test(hash)&&s.expires>Date.now()&&typeof s.csrf==='string')), attempts=new Map(), allowedThreads=new Set(), cache=new Map();
   const images=new ImageRegistry();
   const uploads=new UploadStore(uploadRoot);
@@ -41,6 +43,7 @@ export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000
   let usageCache, usageFlight;
   let projectCache = [], projectUntil = 0, projectNotice = '';
   let modelsCache, modelsFlight, modelsFetchedAt = 0;
+  const controlReceipts=new Map();
   async function models(force = false) {
     if (modelsCache && Date.now()-modelsFetchedAt < (force?5000:60000)) return modelsCache;
     if (!modelsFlight) modelsFlight = bridge.models().then(result => { modelsCache=result;modelsFetchedAt=Date.now();return result; }).finally(()=>{modelsFlight=null;});
@@ -115,6 +118,7 @@ export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000
       const session=sessions.get(hashToken(token));
       if(!session)return json(response,401,{error:'请先配对'});
       if(request.method==='POST'&&!equal(String(request.headers['x-csrf-token']??''),session.csrf))return json(response,403,{error:'请求验证失败'});
+      if(session.expires-Date.now()<11*60*60*1000){session.expires=Date.now()+12*60*60*1000;await persistSessions();response.setHeader('Set-Cookie',`${cookieName}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${request.socket.encrypted?'; Secure':''}`);}
       if(route==='/api/session'&&request.method==='GET')return json(response,200,{csrf:session.csrf});
       if(route==='/api/logout'&&request.method==='POST') {sessions.delete(hashToken(token));await persistSessions();return json(response,200,{ok:true});}
       if(route==='/api/settings/pairing-code'&&request.method==='POST') {
@@ -155,11 +159,40 @@ export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000
         if(!UUID.test(body.threadId??''))return json(response,400,{error:'聊天 ID 格式无效'});
         await saveConnectionId(body.threadId);bridge.callerThreadId=body.threadId; return json(response,200,{ok:true});
       }
-      const match=route.match(/^\/api\/threads\/([^/]+)(\/messages|\/uploads|\/permissions|\/open-desktop)?$/);
+      const match=route.match(/^\/api\/threads\/([^/]+)(\/messages|\/uploads|\/permissions|\/open-desktop|\/controls|\/answer|\/steer)?$/);
       if(match) {
         const id=match[1];
         if(!UUID.test(id))return json(response,400,{error:'聊天 ID 格式无效'});
         if(!allowedThreads.has(id)) {await list();if(!allowedThreads.has(id))return json(response,404,{error:'聊天不存在或不属于本机 Codex'});}
+        if(match[2]==='/controls'&&request.method==='GET'){
+          try{const state=await follower.snapshot(id);const queued=follower.readQueued?await follower.readQueued(id):follower.queues.get(id)??[];return json(response,200,{available:true,questions:questionCards(state),queued:queued.map(m=>({id:m.id,text:m.context?.prompt??'',canSteer:state.threadRuntimeStatus?.type==='active'&&typeof m.context?.prompt==='string'&&m.canSendNow!==false&&!m.serverQueuedMessageId&&!['sending','outcome-unknown'].includes(m.submission?.status)&&!['fileAttachments','imageAttachments','pastedTextAttachments','uploadedFileAttachments','addedFiles','mcpAppModelContextAttachments','commentAttachments'].some(k=>m.context?.[k]?.length)}))});}
+          catch{return json(response,200,{available:false,questions:[],queued:[],message:'桌面互动通路暂不可用，请稍后刷新或在电脑处理。'});}
+        }
+        if(['/answer','/steer'].includes(match[2])&&request.method==='POST'){
+          const body=await readBody(request);if(!UUID.test(body.actionId??''))return json(response,400,{error:'操作编号无效'});
+          const key=id+':'+body.actionId,digest=createHash('sha256').update(JSON.stringify(body)).digest('hex');
+          const previous=controlReceipts.get(key);if(previous){if(previous.digest!==digest)return json(response,409,{error:'操作编号已用于不同内容'});return json(response,200,await previous.promise);}
+          const promise=(async()=>{
+            const state=await follower.snapshot(id);
+            if(match[2]==='/answer'){
+              const pending=(state.requests??[]).find(r=>r.id===body.questionId&&['item/tool/requestUserInput','mcpServer/elicitation/request'].includes(r.method));
+              if(!pending)throw Object.assign(new Error('问题已回答或结束，请刷新当前会话'),{status:409});
+              const answer=validateAnswer(pending,body.response);
+              await follower.submit(id,pending.method==='item/tool/requestUserInput'?'thread-follower-submit-user-input':'thread-follower-submit-mcp-server-elicitation-response',{requestId:pending.id,response:answer});
+            }else{
+              const queued=follower.readQueued?await follower.readQueued(id):follower.queues.get(id)??[];
+              const message=queued.find(m=>m.id===body.messageId);
+              if(!message||message.canSendNow===false||state.threadRuntimeStatus?.type!=='active'||['sending','outcome-unknown'].includes(message.submission?.status))throw Object.assign(new Error('这条消息已处理或当前轮次已结束，请刷新核对'),{status:409});
+              const text=message.context?.prompt;
+              if(typeof text!=='string'||!text.trim()||message.serverQueuedMessageId||['fileAttachments','imageAttachments','pastedTextAttachments','uploadedFileAttachments','addedFiles','mcpAppModelContextAttachments','commentAttachments'].some(k=>message.context?.[k]?.length))throw Object.assign(new Error('此类排队消息请在电脑立即引导'),{status:400});
+              await follower.submit(id,'thread-follower-steer-turn',{input:[{type:'text',text}],restoreMessage:message,clientUserMessageId:message.id});
+              await follower.submit(id,'thread-follower-remove-queued-message',{messageId:message.id});
+            }
+            return {state:'submitted'};
+          })();
+          controlReceipts.set(key,{digest,promise});if(controlReceipts.size>500)controlReceipts.delete(controlReceipts.keys().next().value);
+          try{return json(response,200,await promise);}catch(error){throw error;}
+        }
         if(match[2]==='/uploads'&&request.method==='POST') {
           const now=Date.now();if(!session.uploadWindow||session.uploadWindow.until<now)session.uploadWindow={count:0,until:now+60000};
           if(session.uploadWindow.count>=10)return json(response,429,{error:'上传过于频繁，请稍后再试'});session.uploadWindow.count++;
@@ -212,7 +245,7 @@ export function createApp({ bridge, pairingCode=String(randomInt(10000000,100000
       return json(response,404,{error:'没有此接口'});
     }catch(error){if(!response.headersSent)json(response,error.status??502,{error:error.message});else response.end();}
   };
-  return {handler,ready:uploads.ready,get pairingCode(){return pairingCode;}};
+  return {handler,ready:uploads.ready,close:()=>follower.close?.(),get pairingCode(){return pairingCode;}};
 }
 
 async function main() {
@@ -243,7 +276,7 @@ async function main() {
   await writeFile(path.join(runtime,'running.json'),JSON.stringify(info,null,2),{mode:0o600});
   console.log('Codex LAN 已启动。电脑连接面板：http://127.0.0.1:8788');
   console.log(`配对码：${app.pairingCode}`);info.urls.forEach(url=>console.log(`手机地址：${url}`));
-  const shutdown=()=>{bridge.close();tls.close();preview.close();setTimeout(()=>process.exit(),1000).unref();};
+  const shutdown=()=>{app.close();bridge.close();tls.close();preview.close();setTimeout(()=>process.exit(),1000).unref();};
   process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(error.message);process.exitCode=1;});

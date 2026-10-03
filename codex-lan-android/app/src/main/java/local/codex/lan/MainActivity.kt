@@ -292,6 +292,7 @@ class MainActivity : ComponentActivity() {
     var showHistory by rememberSaveable { mutableStateOf(false) }
     var showUsage by rememberSaveable { mutableStateOf(false) }
     var showModels by rememberSaveable { mutableStateOf(false) }
+    var showQuestions by rememberSaveable { mutableStateOf(false) }
     var historySearch by rememberSaveable(state.selected) { mutableStateOf("") }
     var anchorKey by rememberSaveable(state.selected) { mutableStateOf("") }
     val nearBottom by remember { derivedStateOf { !list.canScrollForward } }
@@ -321,6 +322,7 @@ class MainActivity : ComponentActivity() {
             TextButton(onClick={showHistory=true},enabled=state.items.isNotEmpty()){Text("历史位置")}
             TextButton(onClick={showUsage=true;vm.refreshUsage()}){Text("用量")}
         }
+        if(state.questions.isNotEmpty()||state.queued.isNotEmpty())TextButton(onClick={showQuestions=true},modifier=Modifier.fillMaxWidth().testTag("conversation-controls")) {Text(if(state.questions.isNotEmpty())"待回答问题 · ${state.questions.size}"else "排队消息 · ${state.queued.size}")}
         Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(state = list, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
                 item(key = "history") { if (state.cursor != null) TextButton(onClick = vm::loadOlder, enabled = !state.loadingOlder) { Text(if (state.loadingOlder) "正在读取…" else "查看更早消息") } }
@@ -387,6 +389,7 @@ class MainActivity : ComponentActivity() {
     }
     if(showUsage)UsagePanel(state,{vm.refreshUsage(true)},{showUsage=false})
     if(showModels)ModelPanel(state,vm::chooseModel,{vm.refreshModels(true)}){showModels=false}
+    if(showQuestions)QuestionPanel(state,vm::answer,vm::steer,vm::openDesktop,vm::refreshControls){showQuestions=false}
     if(showHistory)ModalBottomSheet(onDismissRequest={showHistory=false}){
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal=16.dp)){
             Text("跳到历史消息",fontWeight=FontWeight.Bold,fontSize=19.sp)

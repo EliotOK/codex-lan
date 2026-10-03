@@ -1,0 +1,80 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import {randomUUID,createHash} from 'node:crypto';
+import {mkdtemp,writeFile,rm} from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import {applyPatches,DesktopFollower} from '../follower.mjs';
+import {questionCards,validateAnswer} from '../questions.mjs';
+import {createApp} from '../server.mjs';
+
+const plan={id:17,method:'item/tool/requestUserInput',params:{questions:[{id:'scope',question:'Scope?',options:[{label:'A'},{label:'B'}]}]}};
+const mcp={id:'mcp-1',method:'mcpServer/elicitation/request',params:{mode:'form',message:'Choose',requestedSchema:{type:'object',required:['choice','confirmed','tags'],properties:{choice:{type:'string',enum:['A','B']},confirmed:{type:'boolean'},tags:{type:'array',items:{type:'string',enum:['X','Y']},minItems:1}}}}};
+test('Plan and MCP answers preserve typed IDs and validate required, enum and multiselect values',()=>{
+ assert.equal(questionCards({requests:[plan,mcp,{method:'unrelated'}]})[0].id,17);
+ assert.deepEqual(validateAnswer(plan,{answers:{scope:{answers:['A']}}}),{answers:{scope:{answers:['A']}}});
+ assert.throws(()=>validateAnswer(plan,{answers:{scope:{answers:['C']}}}));
+ assert.throws(()=>validateAnswer(plan,{answers:{scope:{answers:['A']},unexpected:{answers:['A']}}}));
+ assert.deepEqual(validateAnswer(mcp,{action:'cancel'}),{action:'cancel',content:null});
+ assert.doesNotThrow(()=>validateAnswer(mcp,{action:'accept',content:{choice:'A',confirmed:false,tags:['X']}}));
+ for(const content of [{choice:'C',confirmed:true,tags:['X']},{choice:'A',confirmed:'yes',tags:['X']},{choice:'A',confirmed:false,tags:[]},{choice:'A',confirmed:false,tags:['X','X']}])assert.throws(()=>validateAnswer(mcp,{action:'accept',content}));
+});
+test('follower patches isolate prior state, enforce paths and reject prototype mutation',()=>{
+ const state={requests:[plan],meta:{active:true}};
+ const next=applyPatches(state,[{op:'remove',path:['requests',0]},{op:'replace',path:['meta','active'],value:false}]);
+ assert.equal(state.requests.length,1);assert.equal(next.requests.length,0);assert.equal(next.meta.active,false);
+ assert.throws(()=>applyPatches(state,[{op:'add',path:['__proto__','owned'],value:true}]));
+});
+test('follower accepts only the discovered local owner and invalidates missed revisions and disconnects',()=>{
+ const f=new DesktopFollower();f.owners.set('thread','owner');
+ const broadcast=(source,change,hostId='local')=>f.handle({type:'broadcast',method:'thread-stream-state-changed',version:11,sourceClientId:source,params:{hostId,conversationId:'thread',change}});
+ broadcast('other',{type:'snapshot',revision:1,conversationState:{requests:[]}});assert.equal(f.snapshots.size,0);
+ broadcast('owner',{type:'snapshot',revision:1,conversationState:{requests:[]}});
+ broadcast('owner',{type:'patches',baseRevision:1,revision:2,patches:[{op:'add',path:['requests',0],value:plan}]});assert.equal(f.snapshots.get('thread').state.requests.length,1);
+ broadcast('owner',{type:'patches',baseRevision:0,revision:3,patches:[]});assert.equal(f.snapshots.size,0);
+ broadcast('owner',{type:'snapshot',revision:4,conversationState:{requests:[]}});
+ f.handle({type:'broadcast',method:'client-status-changed',params:{clientId:'owner',status:'disconnected'}});assert.equal(f.snapshots.size,0);assert.equal(f.owners.size,0);
+});
+test('authenticated controls bind answers to current questions and replay one action once',async t=>{
+ const id=randomUUID(),calls=[],state={requests:[plan,mcp],threadRuntimeStatus:{type:'active'}};
+ const queue={id:'queue-one',cwd:'C:/project',context:{prompt:'Focus on tests',workspaceRoots:['C:/project']}};
+ const follower={queues:new Map([[id,[queue]]]),snapshot:async()=>state,submit:async(...args)=>{calls.push(args);return {ok:true};}};
+ const app=createApp({pairingCode:'12345678',lanAddresses:[],follower,bridge:{list:async()=>({threads:[{id,kind:'codex',hostId:'local'}]}),projects:async()=>({projects:[]})}});
+ const server=http.createServer(app.handler);await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));
+ const base=`http://127.0.0.1:${server.address().port}`;
+ const send=(route,headers,body)=>fetch(base+`/api/threads/${id}/`+route,{headers,...body?{method:'POST',body:JSON.stringify(body)}:{}});
+ assert.equal((await send('controls',{})).status,401);
+ const paired=await fetch(base+'/api/pair',{method:'POST',body:'{"code":"12345678"}'});const csrf=(await paired.json()).csrf;
+ const headers={Cookie:paired.headers.get('set-cookie').split(';')[0],'X-CSRF-Token':csrf};
+ assert.equal((await (await send('controls',headers)).json()).questions.length,2);
+ const body={questionId:17,response:{answers:{scope:{answers:['A']}}},actionId:randomUUID()};
+ assert.equal((await send('answer',{Cookie:headers.Cookie},body)).status,403);
+ assert.equal((await send('answer',headers,{...body,questionId:'17',actionId:randomUUID()})).status,409);
+ assert.equal((await send('answer',headers,body)).status,200);assert.equal((await send('answer',headers,body)).status,200);assert.equal(calls.length,1);
+ assert.equal(calls[0][1],'thread-follower-submit-user-input');assert.equal(calls[0][2].requestId,17);
+ assert.equal((await send('answer',headers,{...body,response:{answers:{scope:{answers:['B']}}}})).status,409);
+ const steer={messageId:queue.id,actionId:randomUUID()};assert.equal((await send('steer',headers,steer)).status,200);
+ assert.equal(calls[1][1],'thread-follower-steer-turn');assert.equal(calls[1][2].clientUserMessageId,queue.id);assert.deepEqual(calls[1][2].restoreMessage,queue);
+ assert.equal(calls[2][1],'thread-follower-remove-queued-message');assert.equal(calls[2][2].messageId,queue.id);
+ state.requests=[];assert.equal((await send('answer',headers,{...body,actionId:randomUUID()})).status,409);
+ state.threadRuntimeStatus={type:'idle'};assert.equal((await send('steer',headers,{...steer,actionId:randomUUID()})).status,409);
+});
+test('queued messages already stored before follower connection remain visible after reconnect',async t=>{
+ const directory=await mkdtemp(path.join(os.tmpdir(),'codex-queue-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+ const queuePath=path.join(directory,'state.json'),id=randomUUID(),message={id:randomUUID(),context:{prompt:'Queued before connection'}};
+ await writeFile(queuePath,JSON.stringify({'queued-follow-ups':{[id]:[message]}}));
+ const follower=new DesktopFollower({queuePath});t.after(()=>follower.close());follower.owners.set(id,'desktop');
+ assert.deepEqual(await follower.readQueued(id),[message]);
+ await writeFile(queuePath,JSON.stringify({'queued-follow-ups':{}}));assert.deepEqual(await follower.readQueued(id),[]);
+ follower.owners.clear();await assert.rejects(()=>follower.readQueued(id));
+});
+test('an active authenticated device renews its expiry while expired credentials require pairing',async t=>{
+ const token='d'.repeat(64),hash=createHash('sha256').update(token).digest('hex');let saved;
+ const app=createApp({bridge:{},initialSessions:[[hash,{csrf:'test',expires:Date.now()+60000}]],saveSessions:async values=>{saved=structuredClone(values);}});
+ const server=http.createServer(app.handler);await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));
+ const base=`http://127.0.0.1:${server.address().port}`;
+ const response=await fetch(base+'/api/session',{headers:{Cookie:`codex_lan=${token}`}});
+ assert.equal(response.status,200);assert.ok(response.headers.get('set-cookie').includes('Max-Age=43200'));assert.ok(saved[0][1].expires>Date.now()+11*60*60*1000);
+ assert.equal((await fetch(base+'/api/session',{headers:{Cookie:'codex_lan='+'a'.repeat(64)}})).status,401);
+});

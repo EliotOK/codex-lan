@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.sp
     }
     UpdateDialog(state,vm::check,vm::download,{
         if(context.packageManager.canRequestPackageInstalls())install()
-        else try{permission.launch(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+context.packageName)))}catch(e:Exception){vm.error("请在系统设置允许 Codex LAN 安装应用，再点击安装更新。")}
+        else try{permission.launch(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+context.packageName)))}catch(e:Exception){vm.error("请在系统设置允许 Codex Light 安装应用，再点击安装更新。")}
     },vm::cancel,close)
 }
 
