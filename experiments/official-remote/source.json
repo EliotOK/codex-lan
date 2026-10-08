@@ -1,0 +1,15 @@
+{
+  "repository": "openai/codex",
+  "paths": [
+    "LICENSE",
+    "codex-rs/app-server-transport/src/transport/remote_control/server_api.rs",
+    "codex-rs/app-server-transport/src/transport/remote_control/auth.rs",
+    "codex-rs/app-server-transport/src/transport/remote_control/enroll.rs",
+    "codex-rs/app-server-transport/src/transport/remote_control/protocol.rs",
+    "codex-rs/app-server-transport/src/transport/remote_control/websocket.rs",
+    "codex-rs/app-server-protocol/src/protocol/v2/remote_control.rs",
+    "codex-rs/app-server-daemon/src/remote_control_client.rs",
+    "codex-rs/cli/src/remote_control_cmd.rs"
+  ],
+  "commit": "3e544e843713d254dfc22ced37b902235a7573f8"
+}
