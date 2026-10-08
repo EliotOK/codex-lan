@@ -50,7 +50,8 @@ try {
         $existingTask = Get-ScheduledTask -TaskName $keepalive.taskName -ErrorAction SilentlyContinue
         if ($existingTask) {
             $watchPath = Join-Path $InstallRoot 'watch.mjs'
-            if ($existingTask.Actions.Arguments -ne "`"$watchPath`"") { throw 'The existing task belongs to another program.' }
+            $maintenanceArguments = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$(Join-Path $InstallRoot 'maintain.ps1')`""
+            if ($existingTask.Actions.Arguments -ne "`"$watchPath`"" -and $existingTask.Actions.Arguments -ne $maintenanceArguments) { throw 'The existing task belongs to another program.' }
             Stop-ScheduledTask -TaskName $keepalive.taskName
         }
     }
@@ -113,7 +114,12 @@ try {
     Write-Host 'Public phone certificate: .runtime\cert.pem'
     if (-not $NoBrowser) { Start-Process -FilePath 'http://127.0.0.1:8788/' -WindowStyle Hidden }
 } catch {
-    if ($existingTask) { try { Enable-ScheduledTask -TaskName $existingTask.TaskName | Out-Null; Start-ScheduledTask -TaskName $existingTask.TaskName } catch { } }
+    if ($existingTask -and $existingTask.Settings.Enabled) { try {
+        $disabledPath = Join-Path $InstallRoot '.runtime\maintenance-disabled'
+        if (Test-Path -LiteralPath $disabledPath) { Remove-Item -LiteralPath $disabledPath }
+        Enable-ScheduledTask -TaskName $existingTask.TaskName | Out-Null
+        Start-ScheduledTask -TaskName $existingTask.TaskName
+    } catch { } }
     Write-Error $_
     exit 1
 }

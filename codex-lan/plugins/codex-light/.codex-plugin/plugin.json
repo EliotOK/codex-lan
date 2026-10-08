@@ -12,9 +12,10 @@
   "interface": {
     "displayName": "Codex Light",
     "shortDescription": "安装、升级与修复 Windows 局域网连接服务",
-    "longDescription": "将 Android 手机连接到自己的 Codex Desktop，提供电脑服务安装、更新、修复和状态查询工作流。",
+    "longDescription": "将 Android 手机连接到自己的 Codex Desktop。点击下方「网站」打开本机连接面板，查看配对码、手机地址及连接设置。电脑面板：http://127.0.0.1:8788/。提供安装、更新、修复和状态查询工作流，随 Desktop 启动维护连接。",
     "developerName": "EliotOK",
     "category": "Productivity",
+    "websiteURL": "http://127.0.0.1:8788/",
     "defaultPrompt": [
       "使用 Codex Light 插件安装电脑端局域网连接服务",
       "检查并修复 Codex Light 的连接",
