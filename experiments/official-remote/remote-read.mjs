@@ -30,7 +30,7 @@ export async function testRemoteRead({ authHeaders, key, session, record }) {
     await record({ stage: 'websocket-upgrade-and-proof', upgraded: true, proofSent: true, proofAccepted: 'pending' });
     if (!authorized) {
       await record({ stage: 'host-pairing-required', originalHostFound: true, chatRead: false });
-      return;
+      return { stage: 'host-pairing-required' };
     }
     const chunks = new Map();
     async function rpc(message, expectedId) {
@@ -61,6 +61,8 @@ export async function testRemoteRead({ authHeaders, key, session, record }) {
     await record({ stage: 'remote-app-server-initialized', proofAccepted: true });
     const result = await rpc({ id: 'probe-original-thread-read', method: 'thread/read', params: { threadId, includeTurns: false } }, 'probe-original-thread-read');
     await record({ stage: 'original-thread-read', matchingThread: result.thread?.id === threadId, status: result.thread?.status?.type });
+    if (result.thread?.id !== threadId) throw new Error('Remote thread identity mismatch');
     wire.send({ type: 'client_closed', client_id: key.clientId, stream_id: streamId, env_id: envId, seq_id: seq++ });
+    return { stage: 'original-thread-read-completed' };
   } finally { wire.close(); }
 }

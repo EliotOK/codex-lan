@@ -61,8 +61,8 @@ async function finishEnrollment(code) {
   stage = 'device-enrolled';
   await record({ stage, algorithm: key.algorithm, protectionClass: key.protectionClass, sessionVerified: true });
   const { testRemoteRead } = await import('./remote-read.mjs');
-  await testRemoteRead({ authHeaders, key, session, record });
-  stage = 'completed'; await record({ stage });
+  const result = await testRemoteRead({ authHeaders, key, session, record });
+  stage = result.stage; await record({ stage });
 }
 async function handle(req, res) {
   try {

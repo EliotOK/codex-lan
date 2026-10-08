@@ -43,7 +43,7 @@ export class WireWebSocket {
       });
       request.on('response', response => { response.resume(); reject(new Error(`Websocket rejected HTTP ${response.statusCode}`)); });
       request.on('timeout', () => request.destroy(new Error('Websocket upgrade timed out')));
-      request.on('error', () => reject(new Error('Websocket upgrade transport failed')));
+      request.on('error', error => { const code = /^[A-Z0-9_]+$/.test(error.code ?? '') ? error.code : 'UNKNOWN'; reject(new Error(`Websocket upgrade transport failed (${code})`)); });
       request.on('upgrade', (response, socket, head) => {
         const accept = createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
         if (response.statusCode !== 101 || response.headers['sec-websocket-accept'] !== accept || response.headers.upgrade?.toLowerCase() !== 'websocket') { socket.destroy(); reject(new Error('Invalid websocket upgrade response')); return; }

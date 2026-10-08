@@ -20,6 +20,11 @@ try {
         if ($request.keyId -notmatch '^codex-light-remote-probe-[a-f0-9-]{36}$') { throw 'Invalid probe key identifier' }
         $key = [System.Security.Cryptography.CngKey]::Open($request.keyId, [System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider)
         switch ($request.operation) {
+            'read-public' {
+                if ($key.ExportPolicy -ne [System.Security.Cryptography.CngExportPolicies]::None -or $key.Algorithm -ne [System.Security.Cryptography.CngAlgorithm]::ECDsaP256) { throw 'Unexpected key protection or algorithm' }
+                $signer = [System.Security.Cryptography.ECDsaCng]::new($key)
+                $result = @{ keyId = $request.keyId; algorithm = 'ecdsa_p256_sha256'; protectionClass = 'os_protected_nonextractable'; publicKeySpkiDerBase64 = [Convert]::ToBase64String($signer.ExportSubjectPublicKeyInfo()); nonextractable = $true }
+            }
             'sign' {
                 $bytes = [Convert]::FromBase64String($request.payloadBase64)
                 if ($bytes.Length -gt 32768) { throw 'Payload too large' }
